@@ -3,7 +3,7 @@
 MMD v9.32対応のDirectShow動画エンコーダーです。
 v9.31以前には対応していません。
 
-## ダウンロード
+## インストール
 
 [Release](https://github.com/hatoghx/MMDirectEncoder/releases)
 
@@ -11,17 +11,17 @@ v9.31以前には対応していません。
 
 Windows 64bit(x64)
 
-## インストール / 導入方法
+## 導入
 
-1.MMDを終了した状態で、ダウンロードしたMMDirectEncoderSetup_{バージョン}.exeを実行 (コーデックの登録と動作確認が自動で行われます)
+1.MMDを終了した状態で、ダウンロードしたMMDirectEncoderSetup_{バージョン}.exeを実行します。コーデックの登録と動作確認が行われます。
 
-2.MMDを起動
+2.MMDを起動します。
 
-3.「AVI出力」を選択し、保存先を指定 (通常の動画出力方法に同じ)
+3.「AVI出力」を選択し、保存先を指定します。
 
-4.ビデオ圧縮コーデックの一覧から「MMDirectEncoder」を選択
+4.ビデオ圧縮コーデックの一覧から「MMDirectEncoder」を選択します。
 
-5.詳細設定から出力方法を設定<br/>
+5.詳細設定から設定します。<br/>
 ※アンインストールは、Windowsの「設定」→「アプリ」から実行できます。
 
 ## 開発リファレンス
@@ -36,5 +36,3 @@ Windows 64bit(x64)
 ## ライセンス
 
 [GNU General Public License v3.0](LICENSE)
-
-Copyright (c) 2026 hato
