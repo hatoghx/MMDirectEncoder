@@ -20,4 +20,6 @@ ZIPを展開し、`install.exe`を実行してください。
 
 ## ライセンス
 
-[MIT](LICENSE)
+[GNU General Public License v3.0](LICENSE)
+
+Copyright (c) 2026 AMAP-N
