@@ -1,6 +1,6 @@
 # MMDirectEncoder
 
-MMD v9.32対応のDirectShow動画エンコーダーです。
+MMD v9.32対応のDirectShow動画エンコーダです。
 v9.31以前には対応していません。
 
 ## インストール
