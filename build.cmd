@@ -84,9 +84,11 @@ if not exist "%DIST%\bin\ffmpeg.exe" (
   )
 )
 
-if not exist "%DIST%\LICENSES" mkdir "%DIST%\LICENSES"
-copy /y "%ROOT%LICENSES\*" "%DIST%\LICENSES\" >nul
-copy /y "%ROOT%LICENSE" "%DIST%\LICENSE.txt" >nul
+if exist "%DIST%\LICENSES" rmdir /s /q "%DIST%\LICENSES"
+if exist "%DIST%\LICENSE.txt" del /q "%DIST%\LICENSE.txt"
+mkdir "%DIST%\LICENSES"
+copy /y "%ROOT%LICENSES\THIRD_PARTY_NOTICES.md" "%DIST%\LICENSES\THIRD_PARTY_NOTICES.md" >nul
+copy /y "%ROOT%LICENSE" "%DIST%\LICENSE" >nul
 
 echo Building tests...
 cl /nologo /O2 /MT /W4 /EHsc /std:c++17 /permissive- /utf-8 ^

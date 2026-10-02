@@ -28,51 +28,37 @@ UninstallDisplayName={#AppName}
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=no
-ShowLanguageDialog=no
-LanguageDetectionMethod=uilanguage
 SetupLogging=yes
-WizardStyle=modern
+WizardStyle=classic
+DisableReadyMemo=yes
+DisableFinishedPage=yes
+DisableWelcomePage=no
+LicenseFile={#BuildDir}\LICENSE
 
 [Languages]
-Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
-japanese.SettingsShortcut=MMDirectEncoder 設定
-english.SettingsShortcut=MMDirectEncoder Settings
-japanese.MmdRunning=MikuMikuDance が起動しています。%n%nMikuMikuDance を終了してから［再試行］を押してください。
-english.MmdRunning=MikuMikuDance is running.%n%nClose MikuMikuDance and then press Retry.
-japanese.NewerInstalled=新しい版（%1）がすでにインストールされています。%n%n古い版（%2）で上書きしますか？
-english.NewerInstalled=A newer version (%1) is already installed.%n%nDo you want to replace it with the older version (%2)?
-japanese.KeepSettingsQuestion=設定ファイルとログも削除しますか？%n%n「いいえ」を選ぶと、次回のインストールで同じ設定を使えます。
-english.KeepSettingsQuestion=Do you also want to delete the settings file and logs?%n%nChoose "No" to keep them for the next installation.
-japanese.FinishedUsage=インストールと動作確認が完了しました。%n%n使い方:%n1. MikuMikuDance（64bit 版）を起動します。%n2. 「ファイル」→「AVIファイルに出力」を選びます。%n3. 「ビデオ圧縮コーデック」で MMDirectEncoder を選び、［詳細設定］で出力形式を選びます。%n%n変換後のファイルは、AVI と同じ場所に保存されます。
-english.FinishedUsage=Installation and the self test are complete.%n%nHow to use:%n1. Start MikuMikuDance (64-bit).%n2. Choose File > Export to AVI file.%n3. Select MMDirectEncoder as the video compression codec and choose the output format with the settings button.%n%nThe converted file is saved next to the AVI.
-japanese.FinishedWithProblem=インストールは完了しましたが、動作確認で問題が見つかりました。%n%n%1
-english.FinishedWithProblem=Installation finished, but the self test found a problem.%n%n%1
-japanese.TestNotRegistered=MMD から MMDirectEncoder を呼び出せない状態です。%n対処: インストーラーをもう一度実行してください。
-english.TestNotRegistered=MMD cannot load MMDirectEncoder.%nWhat to do: run this installer again.
-japanese.TestLoadFailed=MMDirectEncoder.dll を読み込めませんでした。%n考えられる原因: ウイルス対策ソフトによる遮断。%n対処: インストーラーをもう一度実行し、直らない場合はインストール先フォルダーをウイルス対策ソフトの除外に追加してください。%nインストール先: %2
-english.TestLoadFailed=MMDirectEncoder.dll could not be loaded.%nPossible cause: blocked by antivirus software.%nWhat to do: run this installer again. If that does not help, add the installation folder to the antivirus exclusions.%nInstallation folder: %2
-japanese.TestFfmpegMissing=変換に使う ffmpeg.exe が見つかりません。%n考えられる原因: ウイルス対策ソフトによる隔離。%n対処: ウイルス対策ソフトで隔離を解除するか、インストール先フォルダーを除外に追加してから、インストーラーをもう一度実行してください。%nインストール先: %2
-english.TestFfmpegMissing=ffmpeg.exe, which is used for conversion, is missing.%nPossible cause: quarantined by antivirus software.%nWhat to do: restore it in your antivirus software or add the installation folder to the exclusions, then run this installer again.%nInstallation folder: %2
-japanese.TestFfmpegBlocked=ffmpeg.exe を実行できませんでした。%n考えられる原因: ウイルス対策ソフトによる遮断、またはファイルの破損。%n対処: インストール先フォルダーをウイルス対策ソフトの除外に追加し、インストーラーをもう一度実行してください。%nインストール先: %2
-english.TestFfmpegBlocked=ffmpeg.exe could not be run.%nPossible cause: blocked by antivirus software, or the file is damaged.%nWhat to do: add the installation folder to the antivirus exclusions and run this installer again.%nInstallation folder: %2
-japanese.TestVideoFailed=試験用の動画変換に失敗しました。%n考えられる原因: GPU ドライバーの不具合。%n対処: GPU ドライバーを更新してください。出力時は設定画面の「エンコーダー」を「CPU」にすると回避できます。
-english.TestVideoFailed=The test video conversion failed.%nPossible cause: a GPU driver problem.%nWhat to do: update the GPU driver. Setting Encoder to CPU in the settings avoids the problem when exporting.
-japanese.TestExrFailed=試験用の EXR 書き出しに失敗しました。%n対処: 一時フォルダーの空き容量を確認し、インストーラーをもう一度実行してください。
-english.TestExrFailed=The test EXR write failed.%nWhat to do: check the free space of the temporary folder and run this installer again.
-japanese.TestUnknown=動作確認を完了できませんでした（コード %1）。%n対処: インストーラーをもう一度実行してください。
-english.TestUnknown=The self test could not be completed (code %1).%nWhat to do: run this installer again.
-japanese.TestLogHint=詳しい記録: %1
-english.TestLogHint=Details: %1
+SettingsShortcut=MMDirectEncoder Settings
+MmdRunning=Close MikuMikuDance, then click Retry.
+NewerInstalled=Version %1 is installed. Replace it with %2?
+AlreadyInstalled=MMDirectEncoder %1 is already installed.%n%nYes: Open settings%nNo: Reinstall%nCancel: Exit
+KeepSettingsQuestion=Also delete settings and logs?
+TestNotRegistered=Registration failed. Run the installer again.
+TestLoadFailed=MMDirectEncoder.dll could not be loaded. It may be blocked by antivirus software.
+TestFfmpegMissing=ffmpeg.exe is missing. It may have been quarantined by antivirus software.
+TestFfmpegBlocked=ffmpeg.exe could not run. It may be blocked by antivirus software.
+TestVideoFailed=Test encode failed. Update the GPU driver or set Encoder to CPU.
+TestExrFailed=Test EXR write failed. Check free disk space.
+TestUnknown=Self test failed (code %1).
+TestLogHint=Log: %1
 
 [Files]
 Source: "{#BuildDir}\MMDirectEncoder.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\MMDirectEncoderConfig.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\bin\ffmpeg.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "{#BuildDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\LICENSES\*"; DestDir: "{app}\LICENSES"; Flags: ignoreversion
+Source: "{#BuildDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\LICENSES\THIRD_PARTY_NOTICES.md"; DestDir: "{app}\LICENSES"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{cm:SettingsShortcut}"; Filename: "{app}\MMDirectEncoderConfig.exe"; WorkingDir: "{app}"
@@ -88,6 +74,11 @@ Root: HKCU; Subkey: "Software\Classes\CLSID\{#LegacyFilterCategory}\Instance\{#F
 Root: HKCU; Subkey: "Software\Classes\CLSID\{#LegacyFilterCategory}\Instance\{#FilterClsid}"; ValueType: string; ValueName: "FriendlyName"; ValueData: "{#AppName}"
 
 [InstallDelete]
+Type: files; Name: "{app}\LICENSE.txt"
+Type: files; Name: "{app}\LICENSES\OpenEXR-LICENSE.md"
+Type: files; Name: "{app}\LICENSES\Imath-LICENSE.md"
+Type: files; Name: "{app}\LICENSES\libdeflate-LICENSE.txt"
+Type: files; Name: "{app}\LICENSES\OpenJPH-LICENSE.txt"
 Type: files; Name: "{app}\install.exe"
 Type: files; Name: "{app}\uninstall.exe"
 Type: files; Name: "{app}\uninstall.cmd"
@@ -111,9 +102,6 @@ Type: dirifempty; Name: "{app}\LICENSES"
 Type: dirifempty; Name: "{group}"
 
 [Code]
-var
-  SelfTestMessage: String;
-
 function IsMmdRunning(): Boolean;
 begin
   Result := FindWindowByClassName('Polygon Movie Maker') <> 0;
@@ -166,18 +154,44 @@ begin
   end;
 end;
 
+function AskSameVersionInstalled(UninstallKey: String): Boolean;
+var
+  AppDir, ConfigExe: String;
+  Answer, Code: Integer;
+begin
+  Result := True;
+  if WizardSilent() then
+    Exit;
+  if not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', AppDir) then
+    Exit;
+  ConfigExe := AddBackslash(AppDir) + 'MMDirectEncoderConfig.exe';
+  if not FileExists(ConfigExe) or not FileExists(AddBackslash(AppDir) + 'MMDirectEncoder.dll') then
+    Exit;
+  Answer := MsgBox(FmtMessage(CustomMessage('AlreadyInstalled'), ['{#AppVersion}']), mbInformation, MB_YESNOCANCEL or MB_DEFBUTTON1);
+  if Answer = IDNO then
+    Exit;
+  Result := False;
+  if Answer = IDYES then
+    ShellExec('', ConfigExe, '', AppDir, SW_SHOWNORMAL, ewNoWait, Code);
+end;
+
 function InitializeSetup(): Boolean;
 var
-  Installed: String;
+  Installed, UninstallKey: String;
+  Order: Integer;
 begin
-  Result := WaitForMmdToClose();
-  if not Result then
-    Exit;
-  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{DACEB0A6-5C41-42D3-B383-E135FF0847C2}_is1', 'DisplayVersion', Installed) then
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{DACEB0A6-5C41-42D3-B383-E135FF0847C2}_is1';
+  Result := True;
+  if RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Installed) then
   begin
-    if CompareVersions(Installed, '{#AppVersion}') > 0 then
+    Order := CompareVersions(Installed, '{#AppVersion}');
+    if Order = 0 then
+      Result := AskSameVersionInstalled(UninstallKey)
+    else if Order > 0 then
       Result := SuppressibleMsgBox(FmtMessage(CustomMessage('NewerInstalled'), [Installed, '{#AppVersion}']), mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
   end;
+  if Result then
+    Result := WaitForMmdToClose();
 end;
 
 function InitializeUninstall(): Boolean;
@@ -199,38 +213,35 @@ begin
 end;
 
 function DescribeSelfTest(Code: Integer): String;
-var
-  AppDir: String;
 begin
-  AppDir := ExpandConstant('{app}');
   case Code of
     0: Result := '';
     10: Result := CustomMessage('TestNotRegistered');
-    11: Result := FmtMessage(CustomMessage('TestLoadFailed'), ['', AppDir]);
-    20: Result := FmtMessage(CustomMessage('TestFfmpegMissing'), ['', AppDir]);
-    21: Result := FmtMessage(CustomMessage('TestFfmpegBlocked'), ['', AppDir]);
+    11: Result := CustomMessage('TestLoadFailed');
+    20: Result := CustomMessage('TestFfmpegMissing');
+    21: Result := CustomMessage('TestFfmpegBlocked');
     30: Result := CustomMessage('TestVideoFailed');
     31: Result := CustomMessage('TestExrFailed');
   else
     Result := FmtMessage(CustomMessage('TestUnknown'), [IntToStr(Code)]);
   end;
   if Result <> '' then
-    Result := Result + #13#10#13#10 + FmtMessage(CustomMessage('TestLogHint'), [AppDir + '\logs\selftest.log']);
+    Result := Result + #13#10#13#10 + FmtMessage(CustomMessage('TestLogHint'), [ExpandConstant('{app}\logs\selftest.log')]);
 end;
 
 procedure RunSelfTest();
 var
   Code: Integer;
+  Message: String;
 begin
   WizardForm.StatusLabel.Caption := SetupMessage(msgStatusRunProgram);
   if not Exec(ExpandConstant('{app}\MMDirectEncoderConfig.exe'), '--selftest', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) then
     Code := 11;
   Log('Self test result: ' + IntToStr(Code));
-  SelfTestMessage := DescribeSelfTest(Code);
-  if (SelfTestMessage <> '') and not WizardSilent() then
-    MsgBox(SelfTestMessage, mbError, MB_OK);
+  Message := DescribeSelfTest(Code);
+  if (Message <> '') and not WizardSilent() then
+    MsgBox(Message, mbError, MB_OK);
 end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
@@ -242,18 +253,6 @@ begin
   begin
     MigrateLegacySettings();
     RunSelfTest();
-  end;
-end;
-
-procedure CurPageChanged(CurPageID: Integer);
-begin
-  if CurPageID = wpFinished then
-  begin
-    if SelfTestMessage = '' then
-      WizardForm.FinishedLabel.Caption := CustomMessage('FinishedUsage')
-    else
-      WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('FinishedWithProblem'), [SelfTestMessage]);
-    WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
   end;
 end;
 
