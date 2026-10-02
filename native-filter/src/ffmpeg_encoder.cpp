@@ -1,4 +1,6 @@
 #include "ffmpeg_encoder.h"
+#include "mmd_host.h"
+#include "../../encoder/exr_writer.h"
 #include "../../ui/property_dialog.h"
 
 #include <algorithm>
@@ -10,6 +12,9 @@
 extern HINSTANCE g_hInst;
 
 namespace {
+    const DWORD kStopWaitMs = 60000;
+    const ULONGLONG kFinishWaitMs = 1800000;
+
     const GUID kMmdRgb32 = {
         0x773C9AC0, 0x3274, 0x11D0,
         {0xB7, 0x24, 0x00, 0xAA, 0x00, 0x6C, 0x1A, 0x01}};
@@ -63,7 +68,7 @@ CUnknown* WINAPI CFFmpegEncoder::CreateInstance(LPUNKNOWN pUnk, HRESULT* phr) {
 }
 
 CFFmpegEncoder::CFFmpegEncoder(LPUNKNOWN pUnk, HRESULT* phr)
-    : CTransformFilter(NAME("MMDirect Encoder"), pUnk, CLSID_FFmpegEncoder)
+    : CTransformFilter(NAME("MMDirectEncoder"), pUnk, CLSID_FFmpegEncoder)
 {
     m_config.Load();
     if (phr) {
@@ -73,7 +78,7 @@ CFFmpegEncoder::CFFmpegEncoder(LPUNKNOWN pUnk, HRESULT* phr)
 
 CFFmpegEncoder::~CFFmpegEncoder() {
     StopFFmpeg();
-    if (m_config.delete_avi && !m_aviPath.empty()) {
+    if (m_aviDeletePending && !m_aviPath.empty()) {
         SafeDeleteFileWithRetry(m_aviPath, 5, 50);
     }
 }
@@ -95,7 +100,7 @@ STDMETHODIMP CFFmpegEncoder::ShowDialog(int iDialog, HWND hwnd) {
     if (iDialog == VfwCompressDialog_QueryConfig) return S_OK;
     if (iDialog == VfwCompressDialog_QueryAbout) return S_OK;
     if (iDialog == VfwCompressDialog_About) {
-        MessageBoxW(hwnd, L"MMDirect Encoder\nH.264 / HEVC / AV1 DirectShow Filter", L"MMDirect Encoder", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(hwnd, L"MMDirectEncoder\nUtVideo / FFV1 / ProRes / H.264 / HEVC / AV1 / VP9 / PNG / JPEG", L"MMDirectEncoder", MB_OK | MB_ICONINFORMATION);
         return S_OK;
     }
     if (iDialog != VfwCompressDialog_Config) return E_INVALIDARG;
@@ -148,7 +153,6 @@ HRESULT CFFmpegEncoder::CheckInputType(const CMediaType* mtIn) {
           IsEqualGUID(*mtIn->Subtype(), MEDIASUBTYPE_ARGB32) ||
           IsEqualGUID(*mtIn->Subtype(), MEDIASUBTYPE_RGB565) ||
           IsEqualGUID(*mtIn->Subtype(), MEDIASUBTYPE_RGB555) ||
-          IsEqualGUID(*mtIn->Subtype(), MEDIASUBTYPE_RGB8) ||
           IsEqualGUID(*mtIn->Subtype(), kMmdRgb32))) {
         return VFW_E_TYPE_NOT_ACCEPTED;
     }
@@ -169,9 +173,7 @@ HRESULT CFFmpegEncoder::CheckTransform(const CMediaType* mtIn, const CMediaType*
 
     if (mtOut->majortype != MEDIATYPE_Video) return VFW_E_TYPE_NOT_ACCEPTED;
 
-    DWORD expectedFourcc = (m_config.format == L"hevc") ?
-        ((static_cast<DWORD>('H')) | (static_cast<DWORD>('E') << 8) | (static_cast<DWORD>('V') << 16) | (static_cast<DWORD>('C') << 24)) :
-        ((static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24));
+    DWORD expectedFourcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
 
     GUID expected = FourccGuid(expectedFourcc);
     if (!IsEqualGUID(*mtOut->Subtype(), expected)) {
@@ -186,9 +188,7 @@ HRESULT CFFmpegEncoder::GetMediaType(int iPosition, CMediaType* pmt) {
     if (iPosition > 0) return VFW_S_NO_MORE_ITEMS;
     if (!m_pInput->IsConnected() || m_width <= 0 || m_height <= 0) return VFW_E_NOT_CONNECTED;
 
-    DWORD fcc = (m_config.format == L"hevc") ?
-        ((static_cast<DWORD>('H')) | (static_cast<DWORD>('E') << 8) | (static_cast<DWORD>('V') << 16) | (static_cast<DWORD>('C') << 24)) :
-        ((static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24));
+    DWORD fcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
 
     m_fourcc = fcc;
 
@@ -252,14 +252,15 @@ HRESULT CFFmpegEncoder::SetMediaType(PIN_DIRECTION direction, const CMediaType* 
                    IsEqualGUID(m_inSubtype, MEDIASUBTYPE_ARGB32) ||
                    IsEqualGUID(m_inSubtype, kMmdRgb32)) {
             m_pixfmt = L"bgra"; m_bpp = 32;
-        } else if (IsEqualGUID(m_inSubtype, MEDIASUBTYPE_RGB565) ||
-                   IsEqualGUID(m_inSubtype, MEDIASUBTYPE_RGB555)) {
+        } else if (IsEqualGUID(m_inSubtype, MEDIASUBTYPE_RGB565)) {
             m_pixfmt = L"rgb565le"; m_bpp = 16;
-        } else if (IsEqualGUID(m_inSubtype, MEDIASUBTYPE_RGB8)) {
-            m_pixfmt = L"gray"; m_bpp = 8;
+        } else if (IsEqualGUID(m_inSubtype, MEDIASUBTYPE_RGB555)) {
+            m_pixfmt = L"rgb555le"; m_bpp = 16;
         } else {
             return VFW_E_INVALIDMEDIATYPE;
         }
+        m_rowBytes = m_width * (m_bpp / 8);
+        m_stride = ((m_width * m_bpp + 31) / 32) * 4;
     }
     return CTransformFilter::SetMediaType(direction, pmt);
 }
@@ -329,27 +330,34 @@ HRESULT CFFmpegEncoder::StartStreaming() {
     m_firstPkt = true;
     m_readerDone = false;
     m_completed = false;
+    m_eosReceived = false;
+    m_alphaIgnored = false;
+    m_nativeFailed = false;
+    m_pipeFailed = false;
+    m_ffmpegMissing = false;
+    m_aviDeletePending = false;
     m_framesReceived = 0;
     m_stderrBuffer.clear();
+    m_plan = ExecutionPlan();
     m_streamStartTime = std::chrono::steady_clock::now();
 
     m_config.Load();
     ResolveOutputPaths();
-
-    double fps = (m_frameDur > 0) ? (10000000.0 / static_cast<double>(m_frameDur)) : 30.0;
-    m_plan = EncoderController::PrepareExecutionPlan(m_config, m_width, m_height, fps, m_pixfmt, m_bottomUp, m_aviPath);
-    m_outMux = m_plan.elementary_muxer;
-    m_fourcc = m_plan.elementary_fourcc;
-
-    HRESULT hr = StartFFmpeg();
-    m_started = SUCCEEDED(hr);
-    return hr;
+    m_mmd = ReadMmdOutputInfo(m_frameDur);
+    m_outMux = L"h264";
+    m_fourcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
+    m_launchPending = true;
+    m_started = true;
+    return S_OK;
 }
 
 HRESULT CFFmpegEncoder::StopStreaming() {
+    if (!m_started) return S_OK;
+    bool aborted = !m_eosReceived;
     StopFFmpeg();
-    PostProcessOutputs();
+    PostProcessOutputs(aborted);
     m_started = false;
+    m_launchPending = false;
     return S_OK;
 }
 
@@ -423,6 +431,12 @@ void CFFmpegEncoder::StopFFmpeg() {
         CloseHandle(m_hChildStdinW);
         m_hChildStdinW = NULL;
     }
+    if (m_hProc) {
+        if (WaitForSingleObject(m_hProc, kStopWaitMs) != WAIT_OBJECT_0) {
+            TerminateProcess(m_hProc, 1);
+            WaitForSingleObject(m_hProc, 2000);
+        }
+    }
     if (m_hThread) {
         WaitForSingleObject(m_hThread, 5000);
         CloseHandle(m_hThread);
@@ -442,63 +456,219 @@ void CFFmpegEncoder::StopFFmpeg() {
         m_hChildStderrR = NULL;
     }
     if (m_hProc) {
-        if (WaitForSingleObject(m_hProc, 5000) != WAIT_OBJECT_0) {
-            TerminateProcess(m_hProc, 1);
-            WaitForSingleObject(m_hProc, 1000);
-        }
         CloseHandle(m_hProc);
         m_hProc = NULL;
     }
 }
 
-void CFFmpegEncoder::PostProcessOutputs() {
+bool CFFmpegEncoder::AlphaChannelEmpty(const BYTE* data, long cb) const {
+    if (m_bpp != 32 || !data || m_stride <= 0) return false;
+    for (int y = 0; y < m_height; ++y) {
+        long rowStart = static_cast<long>(y) * m_stride;
+        if (rowStart + m_rowBytes > cb) return false;
+        const BYTE* row = data + rowStart;
+        for (int x = 0; x < m_width; ++x) {
+            if (row[x * 4 + 3] != 0) return false;
+        }
+    }
+    return true;
+}
+
+HRESULT CFFmpegEncoder::LaunchForFirstFrame(const BYTE* data, long cb) {
+    m_launchPending = false;
+    std::wstring inputPixFmt = m_pixfmt;
+    if (m_config.alpha_enabled && m_pixfmt == L"bgra" && AlphaChannelEmpty(data, cb)) {
+        inputPixFmt = L"bgr0";
+        m_alphaIgnored = true;
+    }
+    m_plan = EncoderController::PrepareExecutionPlan(m_config, m_width, m_height, m_frameDur,
+                                                     inputPixFmt, m_bottomUp, m_aviPath, m_mmd);
+    std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", m_config.ffmpeg_path);
+    DWORD attr = GetFileAttributesW(ffmpeg.c_str());
+    m_ffmpegMissing = attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY);
+    if (m_ffmpegMissing) {
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    }
+    return StartFFmpeg();
+}
+
+std::wstring CFFmpegEncoder::LastErrorLine() const {
+    std::wstring text = EncoderController::Utf8ToWide(m_stderrBuffer);
+    size_t end = text.find_last_not_of(L"\r\n ");
+    if (end == std::wstring::npos) return std::wstring();
+    size_t start = text.find_last_of(L"\r\n", end);
+    std::wstring line = text.substr(start == std::wstring::npos ? 0 : start + 1, end - (start == std::wstring::npos ? 0 : start + 1) + 1);
+    if (line.size() > 200) line = line.substr(0, 200);
+    return L"\n\nffmpeg: " + line;
+}
+
+void CFFmpegEncoder::NotifyProblem(const std::wstring& detail) const {
+    int lang = m_config.ui_language;
+    if (lang == 0) {
+        LANGID sysLang = PRIMARYLANGID(GetUserDefaultUILanguage());
+        lang = (sysLang == LANG_JAPANESE) ? 1 : 2;
+    }
+    std::wstring logDir = EncoderConfig::GetLogDirectoryPath();
+    std::wstring text;
+    if (lang == 2) {
+        text = L"MMDirectEncoder could not finish the export correctly.\n\n" + detail + L"\n\nLog: " + logDir + L"\\latest.log";
+    } else {
+        text = L"MMDirectEncoder の出力で問題が発生しました。\n\n" + detail + L"\n\nログ: " + logDir + L"\\latest.log";
+    }
+    MessageBoxW(NULL, text.c_str(), L"MMDirectEncoder", MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+}
+
+void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
     auto endTime = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(endTime - m_streamStartTime).count();
     DWORD exitCode = m_completed ? 0 : 1;
-    double fps = (m_frameDur > 0) ? (10000000.0 / static_cast<double>(m_frameDur)) : 30.0;
-
     std::wstring logDir = EncoderConfig::GetLogDirectoryPath();
-    EncoderController::WriteExportLog(logDir, m_plan, m_width, m_height, fps,
-                                      m_framesReceived, exitCode, elapsed, m_stderrBuffer);
 
-    if (m_completed) {
-        bool outputExists = false;
-        if (m_plan.is_image_sequence) {
-            outputExists = CheckSequenceExists(m_plan.primary_output_path);
-        } else if (!m_plan.primary_output_path.empty() && DirectFileExists(m_plan.primary_output_path)) {
-            outputExists = true;
-        }
+    int lang = m_config.ui_language;
+    if (lang == 0) {
+        LANGID sysLang = PRIMARYLANGID(GetUserDefaultUILanguage());
+        lang = (sysLang == LANG_JAPANESE) ? 1 : 2;
+    }
+    auto tr = [lang](const std::wstring& ja, const std::wstring& en) -> std::wstring {
+        if (lang == 2) return en;
+        return ja;
+    };
 
-        if (outputExists) {
-            if (m_config.audio_enabled && m_config.merge_audio && !m_aviPath.empty() && DirectFileExists(m_aviPath)) {
-                std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", m_config.ffmpeg_path);
-                if (m_plan.is_image_sequence) {
-                    if (!m_plan.audio_output_path.empty()) {
-                        EncoderController::ExtractAudio(ffmpeg, m_aviPath, m_plan.audio_output_path, nullptr);
-                    }
-                    if (m_config.delete_avi) {
-                        SafeDeleteFileWithRetry(m_aviPath);
-                    }
-                } else {
-                    bool isWebM = m_plan.primary_output_path.find(L".webm") != std::wstring::npos;
-                    EncoderController::MergeAudio(ffmpeg, m_plan.primary_output_path, m_aviPath, isWebM, nullptr);
-                    if (m_config.delete_avi) {
-                        SafeDeleteFileWithRetry(m_aviPath);
-                    }
-                }
-            } else if (m_config.delete_avi && !m_aviPath.empty()) {
-                SafeDeleteFileWithRetry(m_aviPath);
-            }
+    if (m_framesReceived == 0) {
+        EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, 0, exitCode, elapsed,
+                                          m_pipeFailed ? L"Failed: ffmpeg could not start" : (aborted ? L"Aborted before the first frame" : L"No frames received"), m_stderrBuffer);
+        if (m_pipeFailed && m_ffmpegMissing) {
+            NotifyProblem(tr(L"変換に使う ffmpeg.exe が見つかりませんでした。\n\n考えられる原因: ファイルが削除された、またはウイルス対策ソフトに隔離された。\n対処: MMDirectEncoder のインストーラーをもう一度実行してください。\n\nMMD の AVI は削除していません。",
+                             L"ffmpeg.exe, which is used for conversion, was not found.\n\nPossible cause: the file was deleted or quarantined by antivirus software.\nWhat to do: run the MMDirectEncoder installer again.\n\nThe AVI written by MMD has been kept."));
+        } else if (m_pipeFailed) {
+            NotifyProblem(tr(L"ffmpeg.exe を起動できない、またはすぐに止まりました。\n\n考えられる原因: ウイルス対策ソフトが実行を止めた、またはファイルが壊れている。\n対処: インストーラーをもう一度実行し、それでも直らない場合はウイルス対策ソフトの除外設定に MMDirectEncoder のフォルダーを追加してください。\n\nMMD の AVI は削除していません。" + LastErrorLine(),
+                             L"ffmpeg.exe could not be started or stopped immediately.\n\nPossible cause: antivirus software blocked it, or the file is damaged.\nWhat to do: run the installer again. If that does not help, add the MMDirectEncoder folder to the antivirus exclusions.\n\nThe AVI written by MMD has been kept." + LastErrorLine()));
         }
+        return;
+    }
+
+    if (!m_completed) {
+        EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, m_framesReceived, exitCode, elapsed,
+                                          (aborted && !m_pipeFailed && !m_nativeFailed) ? L"Aborted" : L"Failed", m_stderrBuffer);
+        if (m_nativeFailed) {
+            NotifyProblem(tr(L"EXR ファイルを書き込めませんでした。\n\n考えられる原因: 保存先の空き容量不足、書き込みできない場所（保護されたフォルダーなど）。\n対処: 空き容量を確保するか、ドキュメントなど書き込みできる場所へ保存し直してください。\n\nMMD の AVI は削除していません。",
+                             L"The EXR files could not be written.\n\nPossible cause: not enough free space, or the destination cannot be written to (for example a protected folder).\nWhat to do: free up space or save to a writable place such as Documents.\n\nThe AVI written by MMD has been kept."));
+        } else if (!aborted || m_pipeFailed) {
+            NotifyProblem(tr(L"変換が途中で止まりました。\n\n考えられる原因: 保存先の空き容量不足、GPU ドライバーの不具合、設定とビデオカードの組み合わせ。\n対処: 空き容量を確認し、それでも直らない場合は設定画面で「エンコーダー」を「CPU」にして出力し直してください。\n\nMMD の AVI は削除していません。" + LastErrorLine(),
+                             L"The conversion stopped partway.\n\nPossible cause: not enough free space, a GPU driver problem, or settings the video card does not support.\nWhat to do: check free space. If that does not help, set Encoder to CPU in the settings and export again.\n\nThe AVI written by MMD has been kept." + LastErrorLine()));
+        }
+        return;
+    }
+
+    bool outputExists = false;
+    if (!m_plan.primary_output_path.empty()) {
+        DWORD attr = GetFileAttributesW(m_plan.primary_output_path.c_str());
+        outputExists = attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    }
+    if (!outputExists) {
+        EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, m_framesReceived, exitCode, elapsed,
+                                          L"Failed: output file not found", m_stderrBuffer);
+        if (m_aviPath.empty()) {
+            NotifyProblem(tr(L"MMD から保存先を取得できなかったため、出力できませんでした。\n対処: MMD の「AVIファイルに出力」をもう一度やり直してください。",
+                             L"The destination could not be obtained from MMD, so nothing was exported.\nWhat to do: run MMD's AVI export again."));
+            return;
+        }
+        NotifyProblem(tr(L"変換後のファイルが見つかりませんでした。\n\n考えられる原因: 保存先に書き込めない、またはウイルス対策ソフトがファイルを削除した。\n対処: ドキュメントなど書き込みできる場所へ保存し直してください。\n\nMMD の AVI は削除していません。",
+                         L"The converted file was not found.\n\nPossible cause: the destination cannot be written to, or antivirus software removed the file.\nWhat to do: save to a writable place such as Documents.\n\nThe AVI written by MMD has been kept."));
+        return;
+    }
+
+    std::wstring result = L"Succeeded";
+    std::wstring problem;
+
+    if (m_plan.is_image_sequence && m_plan.sequence_renumber) {
+        if (!EncoderController::RenumberSequence(m_plan, m_framesReceived)) {
+            result = L"Succeeded: some frames could not be renamed";
+            problem = tr(L"連番の一部を改名できませんでした。",
+                         L"Some frames of the sequence could not be renamed.");
+        }
+    }
+
+    bool aviExists = false;
+    if (!m_aviPath.empty()) {
+        DWORD attr = GetFileAttributesW(m_aviPath.c_str());
+        aviExists = attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    }
+    bool wantAudio = m_config.audio_enabled && m_config.merge_audio && !m_plan.audio_codec.empty() &&
+                     !(m_mmd.valid && !m_mmd.wave_enabled);
+    bool audioOk = true;
+    std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", m_config.ffmpeg_path);
+    std::wstring audioSource;
+    double audioOffset = 0.0;
+    if (wantAudio) {
+        if (aviExists && EncoderController::HasAudioStream(ffmpeg, m_aviPath)) {
+            audioSource = m_aviPath;
+        } else if (m_mmd.valid && !m_mmd.wav_path.empty() && m_mmd.fps > 0.0) {
+            audioSource = m_mmd.wav_path;
+            audioOffset = static_cast<double>(m_mmd.start_frame) / m_mmd.fps;
+        }
+        if (audioSource.empty()) {
+            wantAudio = false;
+            result = L"Succeeded: no audio source";
+        }
+    }
+    if (wantAudio) {
+        std::string mergeLog;
+        double fps = (m_mmd.valid && m_mmd.fps > 0.0) ? m_mmd.fps : ((m_frameDur > 0) ? 10000000.0 / static_cast<double>(m_frameDur) : 0.0);
+        double duration = (fps > 0.0) ? static_cast<double>(m_framesReceived) / fps : 0.0;
+        audioOk = EncoderController::MergeAudio(ffmpeg, m_plan.primary_output_path, audioSource, audioOffset, duration, m_plan.audio_codec, &mergeLog);
+        if (audioOk && audioSource != m_aviPath) {
+            result = L"Succeeded: audio taken from the MMD WAV file";
+        }
+        if (!mergeLog.empty()) {
+            m_stderrBuffer += mergeLog;
+        }
+        if (!audioOk) {
+            result = L"Succeeded: audio merge failed, AVI kept";
+            problem = tr(L"音声の結合に失敗しました。音声を残すため MMD の AVI は削除していません。",
+                         L"Audio could not be merged. The AVI written by MMD has been kept so the audio is not lost.");
+        }
+    }
+
+    if (m_config.delete_avi && audioOk && aviExists) {
+        if (!SafeDeleteFileWithRetry(m_aviPath)) {
+            m_aviDeletePending = true;
+        }
+    }
+
+    if (m_alphaIgnored) {
+        result += L" (alpha channel was empty and treated as opaque)";
+    }
+    EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, m_framesReceived, exitCode, elapsed,
+                                      result, m_stderrBuffer);
+    if (!problem.empty()) {
+        NotifyProblem(problem);
     }
 }
 
 HRESULT CFFmpegEncoder::WriteFrame(const BYTE* data, long cb) {
     if (!m_hChildStdinW || !data || cb <= 0) return E_FAIL;
+    const BYTE* src = data;
+    DWORD size = static_cast<DWORD>(cb);
+    if (m_rowBytes > 0 && m_height > 0) {
+        LONGLONG packed = static_cast<LONGLONG>(m_rowBytes) * m_height;
+        LONGLONG strided = static_cast<LONGLONG>(m_stride) * (m_height - 1) + m_rowBytes;
+        if (cb < strided) return E_FAIL;
+        if (m_stride != m_rowBytes) {
+            m_repack.resize(static_cast<size_t>(packed));
+            for (int y = 0; y < m_height; ++y) {
+                memcpy(m_repack.data() + static_cast<size_t>(y) * m_rowBytes,
+                       data + static_cast<size_t>(y) * m_stride,
+                       static_cast<size_t>(m_rowBytes));
+            }
+            src = m_repack.data();
+        }
+        size = static_cast<DWORD>(packed);
+    }
     DWORD total = 0;
-    while (total < static_cast<DWORD>(cb)) {
+    while (total < size) {
         DWORD written = 0;
-        if (!WriteFile(m_hChildStdinW, data + total, static_cast<DWORD>(cb) - total, &written, NULL) || written == 0) {
+        if (!WriteFile(m_hChildStdinW, src + total, size - total, &written, NULL) || written == 0) {
             return E_FAIL;
         }
         total += written;
@@ -519,6 +689,23 @@ HRESULT CFFmpegEncoder::Receive(IMediaSample* pSample) {
     }
     if (!m_started) return VFW_E_WRONG_STATE;
 
+    BYTE* pData = NULL;
+    HRESULT hr = pSample->GetPointer(&pData);
+    if (FAILED(hr) || !pData) return hr;
+    long len = pSample->GetActualDataLength();
+
+    if (m_pipeFailed || m_nativeFailed) {
+        return S_OK;
+    }
+
+    if (m_launchPending) {
+        HRESULT launch = LaunchForFirstFrame(pData, len);
+        if (FAILED(launch)) {
+            m_pipeFailed = true;
+            return S_OK;
+        }
+    }
+
     REFERENCE_TIME tStart = 0, tEnd = 0;
     if (SUCCEEDED(pSample->GetTime(&tStart, &tEnd))) {
         CAutoLock lock(&m_lock);
@@ -528,19 +715,26 @@ HRESULT CFFmpegEncoder::Receive(IMediaSample* pSample) {
         m_tsQueue.push_back(m_lastTs);
     }
 
-    BYTE* pData = NULL;
-    HRESULT hr = pSample->GetPointer(&pData);
-    if (FAILED(hr) || !pData) return hr;
-    long len = pSample->GetActualDataLength();
-
     HRESULT wHr = WriteFrame(pData, len);
-    if (FAILED(wHr)) return wHr;
+    if (FAILED(wHr)) {
+        m_pipeFailed = true;
+        return S_OK;
+    }
+
+    if (m_plan.native_exr && !m_plan.primary_output_path.empty()) {
+        std::wstring framePath = EncoderController::SequenceFramePath(m_plan, m_plan.sequence_start + m_framesReceived);
+        bool alpha = m_config.alpha_enabled && !m_alphaIgnored && m_bpp == 32;
+        if (!WriteExrFrame(framePath, pData, m_width, m_height, m_stride, m_pixfmt, m_bottomUp, alpha)) {
+            m_nativeFailed = true;
+            return S_OK;
+        }
+    }
 
     m_framesReceived++;
     return DrainQueue();
 }
 
-HRESULT CFFmpegEncoder::Transform(IMediaSample* pIn, IMediaSample* pOut) {
+HRESULT CFFmpegEncoder::Transform(IMediaSample*, IMediaSample*) {
     return S_OK;
 }
 
@@ -599,20 +793,27 @@ HRESULT CFFmpegEncoder::DeliverPacket(Packet& pkt) {
 }
 
 HRESULT CFFmpegEncoder::EndOfStream() {
+    m_eosReceived = true;
     if (m_hChildStdinW) {
         CloseHandle(m_hChildStdinW);
         m_hChildStdinW = NULL;
     }
-    while (!m_readerDone.load()) {
-        DrainQueue();
-        Sleep(5);
-    }
-    HRESULT drain = DrainQueue();
+    HRESULT drain = S_OK;
     DWORD exitCode = STILL_ACTIVE;
-    if (m_hProc && WaitForSingleObject(m_hProc, 5000) == WAIT_OBJECT_0) {
-        GetExitCodeProcess(m_hProc, &exitCode);
+    if (m_hProc) {
+        ULONGLONG deadline = GetTickCount64() + kFinishWaitMs;
+        while (!m_readerDone.load() && GetTickCount64() < deadline) {
+            DrainQueue();
+            Sleep(5);
+        }
+        drain = DrainQueue();
+        ULONGLONG now = GetTickCount64();
+        DWORD remaining = (now < deadline) ? static_cast<DWORD>(deadline - now) : 0;
+        if (WaitForSingleObject(m_hProc, remaining) == WAIT_OBJECT_0) {
+            GetExitCodeProcess(m_hProc, &exitCode);
+        }
     }
-    m_completed = SUCCEEDED(drain) && exitCode == 0;
+    m_completed = m_hProc != NULL && SUCCEEDED(drain) && exitCode == 0 && !m_nativeFailed;
     HRESULT eos = CTransformFilter::EndOfStream();
     return FAILED(drain) ? drain : eos;
 }

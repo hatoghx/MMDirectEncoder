@@ -20,21 +20,38 @@ struct EncoderCapabilities {
     bool amf_av1 = false;
 };
 
+struct MmdOutputInfo {
+    bool valid = false;
+    int start_frame = 0;
+    int end_frame = 0;
+    double fps = 0.0;
+    bool wave_enabled = true;
+    std::wstring wav_path;
+};
+
 struct ExecutionPlan {
     std::wstring chosen_codec;
     std::wstring chosen_backend;
     bool fallback_occurred = false;
     std::wstring main_command;
     std::wstring primary_output_path;
-    std::wstring elementary_codec;
-    std::wstring elementary_muxer;
+    std::wstring output_ext;
+    std::wstring elementary_muxer = L"h264";
     DWORD elementary_fourcc = 0;
     bool is_image_sequence = false;
-    std::wstring audio_output_path;
+    std::wstring sequence_base;
+    int sequence_start = 0;
+    int sequence_digits = 0;
+    bool sequence_renumber = false;
+    bool native_exr = false;
+    std::wstring audio_codec;
+    std::wstring input_rate;
 };
 
 class EncoderController {
 public:
+    static const int kTempSequenceDigits = 9;
+
     static EncoderCapabilities ProbeCapabilities(const std::wstring& ffmpegPath);
     static EncoderCapabilities GetCachedCapabilities(const std::wstring& ffmpegPath = L"", bool forceRefresh = false);
 
@@ -49,32 +66,45 @@ public:
     static ExecutionPlan PrepareExecutionPlan(const EncoderConfig& config,
                                              int width,
                                              int height,
-                                             double fps,
+                                             long long frameDuration,
                                              const std::wstring& inputPixFmt,
                                              bool bottomUp,
-                                             const std::wstring& aviPath);
+                                             const std::wstring& aviPath,
+                                             const MmdOutputInfo& mmd = MmdOutputInfo());
+
+    static std::wstring BuildVideoArgs(const EncoderConfig& config,
+                                       const std::wstring& codec,
+                                       bool bottomUp);
+
+    static bool HasAudioStream(const std::wstring& ffmpegPath, const std::wstring& mediaPath);
 
     static bool MergeAudio(const std::wstring& ffmpegPath,
                            const std::wstring& targetVideoPath,
-                           const std::wstring& sourceAviPath,
-                           bool isWebM,
+                           const std::wstring& audioSourcePath,
+                           double audioOffsetSeconds,
+                           double durationSeconds,
+                           const std::wstring& audioCodec,
                            std::string* outLog = nullptr);
 
-    static bool ExtractAudio(const std::wstring& ffmpegPath,
-                             const std::wstring& sourceAviPath,
-                             const std::wstring& targetWavPath,
-                             std::string* outLog = nullptr);
+    static std::wstring SequenceFramePath(const ExecutionPlan& plan, long long number);
+
+    static bool RenumberSequence(ExecutionPlan& plan, long long frameCount);
+
+    static int DigitCount(long long value);
 
     static bool RunEncoderTest(const EncoderConfig& config,
                               std::wstring& outMessage);
 
+    static std::wstring Utf8ToWide(const std::string& s);
+
     static void WriteExportLog(const std::wstring& logDir,
                               const ExecutionPlan& plan,
+                              const MmdOutputInfo& mmd,
                               int width,
                               int height,
-                              double fps,
                               long long frameCount,
                               DWORD exitCode,
                               double elapsedSeconds,
+                              const std::wstring& result,
                               const std::string& processStderr);
 };

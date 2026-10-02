@@ -13,7 +13,7 @@ EXTERN_C const GUID CLSID_FFmpegEncoder = {
 };
 
 CFactoryTemplate g_Templates[] = {
-    { L"MMDirect Encoder",
+    { L"MMDirectEncoder",
       &CLSID_FFmpegEncoder,
       CFFmpegEncoder::CreateInstance,
       NULL,
@@ -138,7 +138,7 @@ STDAPI DllCanUnloadNow(void)
 
 namespace {
     const WCHAR kClsid[] = L"{D79D43B2-F005-40A4-BE18-AFD19C03E6E6}";
-    const WCHAR kFriendlyName[] = L"MMDirect Encoder";
+    const WCHAR kFriendlyName[] = L"MMDirectEncoder";
     const WCHAR kCategories[][40] = {
         L"{33d9a760-90c8-11d0-bd43-00a0c911ce86}",
         L"{860bb310-5d01-11d0-bd3b-00a0c911ce86}",

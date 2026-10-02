@@ -55,7 +55,11 @@ private:
     HRESULT StartFFmpeg();
     void    StopFFmpeg();
     void    ResolveOutputPaths();
-    void    PostProcessOutputs();
+    HRESULT LaunchForFirstFrame(const BYTE* data, long cb);
+    bool    AlphaChannelEmpty(const BYTE* data, long cb) const;
+    void    PostProcessOutputs(bool aborted);
+    void    NotifyProblem(const std::wstring& detail) const;
+    std::wstring LastErrorLine() const;
     HRESULT WriteFrame(const BYTE* data, long cb);
     HRESULT DrainQueue();
     HRESULT DeliverPacket(Packet& pkt);
@@ -80,11 +84,22 @@ private:
     REFERENCE_TIME m_frameDur = 1;
     GUID    m_inSubtype = GUID_NULL;
     std::wstring m_pixfmt;
+    long    m_stride = 0;
+    long    m_rowBytes = 0;
+    std::vector<BYTE> m_repack;
 
     DWORD   m_fourcc = 0;
     std::wstring m_aviPath;
     std::wstring m_outMux;
+    MmdOutputInfo m_mmd;
     bool    m_completed = false;
+    bool    m_launchPending = false;
+    bool    m_eosReceived = false;
+    bool    m_alphaIgnored = false;
+    bool    m_nativeFailed = false;
+    bool    m_pipeFailed = false;
+    bool    m_ffmpegMissing = false;
+    bool    m_aviDeletePending = false;
 
     long long m_framesReceived = 0;
     std::chrono::time_point<std::chrono::steady_clock> m_streamStartTime;

@@ -9,6 +9,9 @@ set "SRC_FILTER=%ROOT%native-filter\src"
 set "SRC_CONFIG=%ROOT%config"
 set "SRC_ENCODER=%ROOT%encoder"
 set "SRC_UI=%ROOT%ui"
+set "DEPS_PREFIX=%ROOT%..\deps\install"
+set "EXR_INC=/DNOMINMAX /I"%DEPS_PREFIX%\include\OpenEXR" /I"%DEPS_PREFIX%\include\Imath" /I"%DEPS_PREFIX%\include""
+set "EXR_LIBS=/LIBPATH:"%DEPS_PREFIX%\lib" OpenEXR-3_4.lib Iex-3_4.lib IlmThread-3_4.lib OpenEXRCore-3_4.lib openjph.lib Imath-3_2.lib"
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (
@@ -23,6 +26,7 @@ if not defined VSROOT (
 call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 
+call "%ROOT%build_deps.cmd" || exit /b 1
 if not exist "%DIST%" mkdir "%DIST%"
 if not exist "%DIST%\bin" mkdir "%DIST%\bin"
 if not exist "%OBJ%\base" mkdir "%OBJ%\base"
@@ -44,6 +48,7 @@ if not exist "%OBJ%\strmbase.lib" (
 echo Compiling shared modules...
 cl %COMMON% /W4 /Fo"%OBJ%\core\config.obj" "%SRC_CONFIG%\encoder_config.cpp" || exit /b 1
 cl %COMMON% /W4 /Fo"%OBJ%\core\encoder.obj" "%SRC_ENCODER%\encoder_controller.cpp" || exit /b 1
+cl %COMMON% /W4 %EXR_INC% /Fo"%OBJ%\core\exr.obj" "%SRC_ENCODER%\exr_writer.cpp" || exit /b 1
 cl %COMMON% /W4 /Fo"%OBJ%\core\ui.obj" "%SRC_UI%\property_dialog.cpp" || exit /b 1
 rc /nologo /c65001 /fo"%OBJ%\core\encoder_ui.res" "%SRC_UI%\encoder_ui.rc" || exit /b 1
 rc /nologo /fo"%OBJ%\core\version.res" "%ROOT%native-filter\version.rc" || exit /b 1
@@ -51,48 +56,37 @@ rc /nologo /fo"%OBJ%\core\version.res" "%ROOT%native-filter\version.rc" || exit 
 echo Building native DirectShow filter DLL...
 cl %COMMON% /W4 /Fo"%OBJ%\core\ffmpeg_encoder.obj" "%SRC_FILTER%\ffmpeg_encoder.cpp" || exit /b 1
 cl %COMMON% /W4 /Fo"%OBJ%\core\dll.obj" "%SRC_FILTER%\dll.cpp" || exit /b 1
+cl %COMMON% /W4 /Fo"%OBJ%\core\mmd_host.obj" "%SRC_FILTER%\mmd_host.cpp" || exit /b 1
 
 link /nologo /DLL /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /GUARD:CF /OPT:REF /OPT:ICF ^
   /OUT:"%DIST%\MMDirectEncoder.dll" /PDB:"%OBJ%\MMDirectEncoder.pdb" ^
   /IMPLIB:"%OBJ%\MMDirectEncoder.lib" ^
   /DEF:"%ROOT%native-filter\ffmpeg_encoder.def" ^
-  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\ui.obj" ^
-  "%OBJ%\core\ffmpeg_encoder.obj" "%OBJ%\core\dll.obj" ^
+  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\exr.obj" "%OBJ%\core\ui.obj" ^
+  "%OBJ%\core\ffmpeg_encoder.obj" "%OBJ%\core\dll.obj" "%OBJ%\core\mmd_host.obj" ^
   "%OBJ%\core\encoder_ui.res" "%OBJ%\core\version.res" ^
   "%OBJ%\strmbase.lib" strmiids.lib comctl32.lib uxtheme.lib shell32.lib shlwapi.lib ^
-  winmm.lib ole32.lib oleaut32.lib user32.lib gdi32.lib advapi32.lib dxgi.lib
+  winmm.lib ole32.lib oleaut32.lib user32.lib gdi32.lib advapi32.lib dxgi.lib %EXR_LIBS%
 if errorlevel 1 exit /b 1
 
 echo Building standalone config executable...
 cl %COMMON% /W4 /Fo"%OBJ%\core\standalone.obj" "%SRC_UI%\standalone_config.cpp" || exit /b 1
 link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
   /OUT:"%DIST%\MMDirectEncoderConfig.exe" /PDB:"%OBJ%\MMDirectEncoderConfig.pdb" ^
-  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\ui.obj" ^
+  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\exr.obj" "%OBJ%\core\ui.obj" ^
   "%OBJ%\core\standalone.obj" "%OBJ%\core\encoder_ui.res" ^
-  comctl32.lib uxtheme.lib shell32.lib shlwapi.lib ole32.lib oleaut32.lib user32.lib gdi32.lib advapi32.lib dxgi.lib
-if errorlevel 1 exit /b 1
-
-echo Building native uninstaller executable...
-cl %COMMON% /W4 /Fo"%OBJ%\core\uninstall.obj" "%SRC_UI%\uninstaller.cpp" || exit /b 1
-link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
-  /OUT:"%DIST%\uninstall.exe" /PDB:"%OBJ%\uninstall.pdb" ^
-  "%OBJ%\core\uninstall.obj" "%OBJ%\core\encoder_ui.res" ^
-  shell32.lib advapi32.lib user32.lib
-if errorlevel 1 exit /b 1
-
-echo Building native installer executable...
-cl %COMMON% /W4 /Fo"%OBJ%\core\installer.obj" "%SRC_UI%\installer.cpp" || exit /b 1
-link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
-  /OUT:"%DIST%\install.exe" /PDB:"%OBJ%\install.pdb" ^
-  "%OBJ%\core\installer.obj" "%OBJ%\core\encoder_ui.res" ^
-  shell32.lib advapi32.lib user32.lib ole32.lib shlwapi.lib
+  comctl32.lib uxtheme.lib shell32.lib shlwapi.lib ole32.lib oleaut32.lib user32.lib gdi32.lib advapi32.lib dxgi.lib %EXR_LIBS%
 if errorlevel 1 exit /b 1
 
 if not exist "%DIST%\bin\ffmpeg.exe" (
-  if exist "%LOCALAPPDATA%\MMDirect Encoder\bin\ffmpeg.exe" (
-    copy /y "%LOCALAPPDATA%\MMDirect Encoder\bin\ffmpeg.exe" "%DIST%\bin\ffmpeg.exe" >nul
+  if exist "%LOCALAPPDATA%\MMDirectEncoder\bin\ffmpeg.exe" (
+    copy /y "%LOCALAPPDATA%\MMDirectEncoder\bin\ffmpeg.exe" "%DIST%\bin\ffmpeg.exe" >nul
   )
 )
+
+if not exist "%DIST%\LICENSES" mkdir "%DIST%\LICENSES"
+copy /y "%ROOT%LICENSES\*" "%DIST%\LICENSES\" >nul
+copy /y "%ROOT%LICENSE" "%DIST%\LICENSE.txt" >nul
 
 echo Building tests...
 cl /nologo /O2 /MT /W4 /EHsc /std:c++17 /permissive- /utf-8 ^
@@ -111,9 +105,18 @@ cl /nologo /O2 /MT /W4 /EHsc /std:c++17 /permissive- /utf-8 ^
   /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 ^
   /I"%SRC_CONFIG%" /I"%SRC_ENCODER%" /Fo"%OBJ%\tests\test_suite.obj" ^
   "%ROOT%native-filter\tests\test_encoder_suite.cpp" ^
-  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" ^
-  /Fe:"%OBJ%\tests\test_encoder_suite.exe" shell32.lib ole32.lib advapi32.lib dxgi.lib
+  "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\exr.obj" ^
+  /Fe:"%OBJ%\tests\test_encoder_suite.exe" shell32.lib ole32.lib advapi32.lib dxgi.lib /link %EXR_LIBS%
 if errorlevel 1 exit /b 1
+
+set "ISCC="
+for %%P in ("%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" "%ProgramFiles%\Inno Setup 6\ISCC.exe" "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe") do if exist %%P set "ISCC=%%~P"
+if defined ISCC (
+  echo Building installer...
+  "%ISCC%" /Q "%ROOT%installer\MMDirectEncoder.iss" || exit /b 1
+) else (
+  echo Inno Setup 6 was not found. The installer was not built.
+)
 
 echo Build finished successfully!
 endlocal

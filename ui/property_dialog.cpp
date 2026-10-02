@@ -58,8 +58,49 @@ namespace {
         IDC_CHECK_ALPHA, IDC_COMBO_ALPHA_FORMAT,
         IDC_STATIC_BACKEND, IDC_COMBO_BACKEND,
         IDC_STATIC_QUALITY, IDC_EDIT_CRF, IDC_SPIN_CRF,
-        IDC_CHECK_AUDIO
+        IDC_CHECK_AUDIO, IDC_CHECK_DELETE_AVI
     };
+
+    const PresetType kPresetOrder[] = {
+        PresetType::HighQualityH264,
+        PresetType::HighQualityHEVC,
+        PresetType::HighQualityAV1,
+        PresetType::YouTube,
+        PresetType::Editing,
+        PresetType::Transparent,
+        PresetType::PNGSequence,
+        PresetType::Custom
+    };
+    const int kPresetCount = static_cast<int>(sizeof(kPresetOrder) / sizeof(kPresetOrder[0]));
+
+    int PresetToIndex(PresetType p) {
+        for (int i = 0; i < kPresetCount; ++i) {
+            if (kPresetOrder[i] == p) return i;
+        }
+        return kPresetCount - 1;
+    }
+
+    const wchar_t* const kVideoFormatKeys[] = { L"h264", L"hevc", L"av1", L"prores422", L"prores422hq", L"vp9", L"av1webm", L"jpg", L"png", L"exr" };
+    const size_t kVideoFormatCount = sizeof(kVideoFormatKeys) / sizeof(kVideoFormatKeys[0]);
+    const wchar_t* const kAlphaFormatKeys[] = { L"prores4444", L"prores4444xq", L"vp9", L"png", L"exr" };
+    const size_t kAlphaFormatCount = sizeof(kAlphaFormatKeys) / sizeof(kAlphaFormatKeys[0]);
+
+    int KeyToIndex(const wchar_t* const* keys, size_t count, const std::wstring& key) {
+        for (size_t i = 0; i < count; ++i) {
+            if (key == keys[i]) return static_cast<int>(i);
+        }
+        return 0;
+    }
+
+    std::wstring IndexToKey(const wchar_t* const* keys, size_t count, int index) {
+        if (index < 0 || static_cast<size_t>(index) >= count) return keys[0];
+        return keys[index];
+    }
+
+    PresetType IndexToPreset(int index) {
+        if (index < 0 || index >= kPresetCount) return PresetType::Custom;
+        return kPresetOrder[index];
+    }
 
     const int kAdvancedControls[] = {
         IDC_STATIC_BIT_DEPTH, IDC_COMBO_BIT_DEPTH,
@@ -68,8 +109,7 @@ namespace {
         IDC_STATIC_COLOR_RANGE, IDC_COMBO_COLOR_RANGE,
         IDC_CHECK_GOP_AUTO, IDC_STATIC_GOP, IDC_EDIT_GOP,
         IDC_STATIC_BFRAMES, IDC_EDIT_BFRAMES,
-        IDC_STATIC_LOOKAHEAD, IDC_EDIT_LOOKAHEAD,
-        IDC_STATIC_EXTRA_ARGS, IDC_EDIT_EXTRA_ARGS
+        IDC_STATIC_LOOKAHEAD, IDC_EDIT_LOOKAHEAD
     };
 
     const int kOtherControls[] = {
@@ -93,63 +133,59 @@ namespace {
 
     enum class UILanguage {
         Japanese = 1,
-        English = 2,
-        Chinese = 3
+        English = 2
     };
 
     UILanguage ResolveLanguage(int ui_language) {
         if (ui_language == 1) return UILanguage::Japanese;
         if (ui_language == 2) return UILanguage::English;
-        if (ui_language == 3) return UILanguage::Chinese;
         LANGID lang = PRIMARYLANGID(GetUserDefaultUILanguage());
-        if (lang == LANG_CHINESE) return UILanguage::Chinese;
         if (lang == LANG_JAPANESE) return UILanguage::Japanese;
         return UILanguage::English;
     }
 
     void UpdateDialogLanguage(HWND hwnd, UILanguage lang, const EncoderCapabilities& caps) {
-        auto tr = [lang](const wchar_t* ja, const wchar_t* en, const wchar_t* zh) -> const wchar_t* {
-            if (lang == UILanguage::Chinese) return zh;
+        auto tr = [lang](const wchar_t* ja, const wchar_t* en) -> const wchar_t* {
             if (lang == UILanguage::English) return en;
             return ja;
         };
 
-        SetWindowTextW(hwnd, tr(L"MMDirect Encoder 設定", L"MMDirect Encoder Settings", L"MMDirect Encoder 设置"));
+        SetWindowTextW(hwnd, tr(L"MMDirectEncoder 設定", L"MMDirectEncoder Settings"));
 
         HWND hTab = GetDlgItem(hwnd, IDC_TAB_MAIN);
         TCITEMW tie;
         ZeroMemory(&tie, sizeof(tie));
         tie.mask = TCIF_TEXT;
-        tie.pszText = const_cast<LPWSTR>(tr(L"基本設定", L"Basic Settings", L"基本设置"));
+        tie.pszText = const_cast<LPWSTR>(tr(L"基本設定", L"Basic Settings"));
         TabCtrl_SetItem(hTab, 0, &tie);
-        tie.pszText = const_cast<LPWSTR>(tr(L"詳細設定", L"Advanced Settings", L"高级设置"));
+        tie.pszText = const_cast<LPWSTR>(tr(L"詳細設定", L"Advanced Settings"));
         TabCtrl_SetItem(hTab, 1, &tie);
-        tie.pszText = const_cast<LPWSTR>(tr(L"その他の設定", L"Other Settings", L"其他设置"));
+        tie.pszText = const_cast<LPWSTR>(tr(L"その他の設定", L"Other Settings"));
         TabCtrl_SetItem(hTab, 2, &tie);
 
-        SetDlgItemTextW(hwnd, IDC_STATIC_PRESET, tr(L"プリセット:", L"Preset:", L"预设:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_FORMAT, tr(L"形式 (コーデック):", L"Format (Codec):", L"格式 (编码):"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_BACKEND, tr(L"エンコーダー:", L"Encoder:", L"编码器:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_QUALITY, tr(L"品質 (CRF/QP):", L"Quality (CRF/QP):", L"质量 (CRF/QP):"));
-        SetDlgItemTextW(hwnd, IDC_CHECK_ALPHA, tr(L"透過 (アルファ)", L"Alpha Output", L"透明 (Alpha)"));
-        SetDlgItemTextW(hwnd, IDC_CHECK_AUDIO, tr(L"音声を含める (AVI音声を自動結合)", L"Include Audio (Merge AVI Audio)", L"包含音频 (自动合并AVI音频)"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_PRESET, tr(L"プリセット:", L"Preset:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_FORMAT, tr(L"形式 (コーデック):", L"Format (Codec):"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_BACKEND, tr(L"エンコーダー:", L"Encoder:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_QUALITY, tr(L"品質 (CRF/QP):", L"Quality (CRF/QP):"));
+        SetDlgItemTextW(hwnd, IDC_CHECK_ALPHA, tr(L"透過 (アルファ)", L"Alpha Output"));
+        SetDlgItemTextW(hwnd, IDC_CHECK_AUDIO, tr(L"音声を含める (AVI音声を自動結合)", L"Include Audio (Merge AVI Audio)"));
+        SetDlgItemTextW(hwnd, IDC_CHECK_DELETE_AVI, tr(L"変換後に MMD の AVI を削除する", L"Delete the MMD AVI after conversion"));
 
-        SetDlgItemTextW(hwnd, IDC_STATIC_BIT_DEPTH, tr(L"ビット深度:", L"Bit Depth:", L"位深度:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_COLORSPACE, tr(L"色空間:", L"Color Space:", L"色彩空间:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_CHROMA, tr(L"クロマサンプリング:", L"Chroma:", L"色度抽样:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_COLOR_RANGE, tr(L"出力レンジ:", L"Color Range:", L"颜色范围:"));
-        SetDlgItemTextW(hwnd, IDC_CHECK_GOP_AUTO, tr(L"GOP自動", L"Auto GOP", L"自动GOP"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_GOP, tr(L"GOP/I間隔:", L"GOP/Keyframe:", L"GOP/关键帧:"));
-        SetDlgItemTextW(hwnd, IDC_STATIC_BFRAMES, tr(L"Bフレーム:", L"B-Frames:", L"B帧数量:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_BIT_DEPTH, tr(L"ビット深度:", L"Bit Depth:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_COLORSPACE, tr(L"色空間:", L"Color Space:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_CHROMA, tr(L"クロマサンプリング:", L"Chroma:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_COLOR_RANGE, tr(L"出力レンジ:", L"Color Range:"));
+        SetDlgItemTextW(hwnd, IDC_CHECK_GOP_AUTO, tr(L"GOP自動", L"Auto GOP"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_GOP, tr(L"GOP/I間隔:", L"GOP/Keyframe:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_BFRAMES, tr(L"Bフレーム:", L"B-Frames:"));
         SetDlgItemTextW(hwnd, IDC_STATIC_LOOKAHEAD, L"Lookahead:");
-        SetDlgItemTextW(hwnd, IDC_STATIC_EXTRA_ARGS, tr(L"FFmpeg 追加引数:", L"FFmpeg Args:", L"FFmpeg 附加参数:"));
 
-        SetDlgItemTextW(hwnd, IDC_STATIC_LANGUAGE, tr(L"表示言語:", L"Language:", L"显示语言:"));
+        SetDlgItemTextW(hwnd, IDC_STATIC_LANGUAGE, tr(L"表示言語:", L"Language:"));
 
-        SetDlgItemTextW(hwnd, IDC_BUTTON_TEST, tr(L"エンコーダーテスト", L"Encoder Test", L"编码器测试"));
-        SetDlgItemTextW(hwnd, IDC_BUTTON_OPEN_LOG, tr(L"ログを開く", L"Open Log", L"打开日志"));
-        SetDlgItemTextW(hwnd, IDOK, tr(L"OK", L"OK", L"确定"));
-        SetDlgItemTextW(hwnd, IDCANCEL, tr(L"キャンセル", L"Cancel", L"取消"));
+        SetDlgItemTextW(hwnd, IDC_BUTTON_TEST, tr(L"エンコーダーテスト", L"Encoder Test"));
+        SetDlgItemTextW(hwnd, IDC_BUTTON_OPEN_LOG, tr(L"ログを開く", L"Open Log"));
+        SetDlgItemTextW(hwnd, IDOK, tr(L"OK", L"OK"));
+        SetDlgItemTextW(hwnd, IDCANCEL, tr(L"キャンセル", L"Cancel"));
 
         auto RepopulateCombo = [](HWND hDlg, int comboId, const wchar_t* const* items, size_t count) {
             int sel = static_cast<int>(SendDlgItemMessageW(hDlg, comboId, CB_GETCURSEL, 0, 0));
@@ -167,9 +203,8 @@ namespace {
             L"高品質 HEVC (MP4)",
             L"高品質 AV1 (MP4)",
             L"YouTube (推奨設定)",
-            L"編集用 (ProRes 422 MOV)",
+            L"編集用 (ProRes 422 HQ MOV)",
             L"透過動画 (アルファ付き)",
-            L"ロスレス (可逆圧縮)",
             L"静止画連番 (PNG)",
             L"カスタム"
         };
@@ -178,29 +213,16 @@ namespace {
             L"High Quality HEVC (MP4)",
             L"High Quality AV1 (MP4)",
             L"YouTube (Recommended)",
-            L"Editing (ProRes 422 MOV)",
+            L"Editing (ProRes 422 HQ MOV)",
             L"Transparent Video (Alpha)",
-            L"Lossless",
             L"Image Sequence (PNG)",
             L"Custom"
         };
-        const wchar_t* presetsZh[] = {
-            L"高质量 H.264 (MP4)",
-            L"高质量 HEVC (MP4)",
-            L"高质量 AV1 (MP4)",
-            L"YouTube (推荐设置)",
-            L"剪辑专用 (ProRes 422 MOV)",
-            L"透明视频 (含Alpha)",
-            L"无损 (Lossless)",
-            L"图片序列 (PNG)",
-            L"自定义"
-        };
-        RepopulateCombo(hwnd, IDC_COMBO_PRESET, (lang == UILanguage::Chinese ? presetsZh : (lang == UILanguage::English ? presetsEn : presetsJa)), 9);
+        RepopulateCombo(hwnd, IDC_COMBO_PRESET, (lang == UILanguage::English ? presetsEn : presetsJa), static_cast<size_t>(kPresetCount));
 
-        const wchar_t* formatsJa[] = { L"H.264 (.mp4)", L"HEVC H.265 (.mp4)", L"AV1 (.mp4)", L"VP9 (.webm)", L"ProRes (.mov)", L"PNG 静止画連番 (.png)", L"JPEG 静止画連番 (.jpg)" };
-        const wchar_t* formatsEn[] = { L"H.264 (.mp4)", L"HEVC H.265 (.mp4)", L"AV1 (.mp4)", L"VP9 (.webm)", L"ProRes (.mov)", L"PNG Image Sequence (.png)", L"JPEG Image Sequence (.jpg)" };
-        const wchar_t* formatsZh[] = { L"H.264 (.mp4)", L"HEVC H.265 (.mp4)", L"AV1 (.mp4)", L"VP9 (.webm)", L"ProRes (.mov)", L"PNG 图片序列 (.png)", L"JPEG 图片序列 (.jpg)" };
-        RepopulateCombo(hwnd, IDC_COMBO_FORMAT, (lang == UILanguage::Chinese ? formatsZh : (lang == UILanguage::English ? formatsEn : formatsJa)), 7);
+        const wchar_t* formatsJa[] = { L"H.264 (.mp4)", L"H.265 HEVC (.mp4)", L"AV1 (.mp4)", L"Apple ProRes 422 (.mov)", L"Apple ProRes 422 HQ (.mov)", L"VP9 (.webm)", L"AV1 (.webm)", L"JPEG 連番 (.jpg)", L"PNG 連番 (.png)", L"OpenEXR 連番 (.exr)" };
+        const wchar_t* formatsEn[] = { L"H.264 (.mp4)", L"H.265 HEVC (.mp4)", L"AV1 (.mp4)", L"Apple ProRes 422 (.mov)", L"Apple ProRes 422 HQ (.mov)", L"VP9 (.webm)", L"AV1 (.webm)", L"JPEG Sequence (.jpg)", L"PNG Sequence (.png)", L"OpenEXR Sequence (.exr)" };
+        RepopulateCombo(hwnd, IDC_COMBO_FORMAT, (lang == UILanguage::English ? formatsEn : formatsJa), kVideoFormatCount);
 
         int curBkIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_GETCURSEL, 0, 0));
         BackendItemData curBkData = BACKEND_AUTO;
@@ -212,7 +234,7 @@ namespace {
             int idx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text)));
             SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_SETITEMDATA, idx, static_cast<LPARAM>(id));
         };
-        addBackend(tr(L"自動 (Auto)", L"Auto", L"自动 (Auto)"), BACKEND_AUTO);
+        addBackend(tr(L"自動 (Auto)", L"Auto"), BACKEND_AUTO);
         if (caps.has_nvidia && (caps.nvenc_h264 || caps.nvenc_hevc || caps.nvenc_av1)) {
             addBackend(L"NVIDIA (NVENC)", BACKEND_NVIDIA);
         }
@@ -222,7 +244,7 @@ namespace {
         if (caps.has_amd && (caps.amf_h264 || caps.amf_hevc || caps.amf_av1)) {
             addBackend(L"AMD (AMF)", BACKEND_AMD);
         }
-        addBackend(tr(L"CPU (ソフトウェア)", L"CPU (Software)", L"CPU (软件编码)"), BACKEND_CPU);
+        addBackend(tr(L"CPU (ソフトウェア)", L"CPU (Software)"), BACKEND_CPU);
 
         int bkCount = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_GETCOUNT, 0, 0));
         int selBk = 0;
@@ -234,10 +256,9 @@ namespace {
         }
         SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_SETCURSEL, selBk, 0);
 
-        const wchar_t* alphaFormatsJa[] = { L"ProRes 4444 (.mov)", L"VP9 (.webm)", L"PNG 静止画連番 (.png)", L"FFV1 (.mkv)" };
-        const wchar_t* alphaFormatsEn[] = { L"ProRes 4444 (.mov)", L"VP9 (.webm)", L"PNG Image Sequence (.png)", L"FFV1 (.mkv)" };
-        const wchar_t* alphaFormatsZh[] = { L"ProRes 4444 (.mov)", L"VP9 (.webm)", L"PNG 图片序列 (.png)", L"FFV1 (.mkv)" };
-        RepopulateCombo(hwnd, IDC_COMBO_ALPHA_FORMAT, (lang == UILanguage::Chinese ? alphaFormatsZh : (lang == UILanguage::English ? alphaFormatsEn : alphaFormatsJa)), 4);
+        const wchar_t* alphaFormatsJa[] = { L"Apple ProRes 4444 (.mov)", L"Apple ProRes 4444 XQ (.mov)", L"VP9 (.webm)", L"PNG 連番 (.png)", L"OpenEXR 連番 (.exr)" };
+        const wchar_t* alphaFormatsEn[] = { L"Apple ProRes 4444 (.mov)", L"Apple ProRes 4444 XQ (.mov)", L"VP9 (.webm)", L"PNG Sequence (.png)", L"OpenEXR Sequence (.exr)" };
+        RepopulateCombo(hwnd, IDC_COMBO_ALPHA_FORMAT, (lang == UILanguage::English ? alphaFormatsEn : alphaFormatsJa), kAlphaFormatCount);
 
         const wchar_t* depths[] = { L"8 bit", L"10 bit" };
         RepopulateCombo(hwnd, IDC_COMBO_BIT_DEPTH, depths, 2);
@@ -245,59 +266,56 @@ namespace {
         const wchar_t* chromas[] = { L"4:2:0", L"4:2:2", L"4:4:4" };
         RepopulateCombo(hwnd, IDC_COMBO_CHROMA, chromas, 3);
 
-        const wchar_t* spacesJa[] = { L"BT.709 (標準HD)", L"BT.601 (SD)", L"BT.2020 (広色域)" };
-        const wchar_t* spacesEn[] = { L"BT.709 (Standard HD)", L"BT.601 (SD)", L"BT.2020 (Wide Gamut)" };
-        const wchar_t* spacesZh[] = { L"BT.709 (标准HD)", L"BT.601 (SD)", L"BT.2020 (广色域)" };
-        RepopulateCombo(hwnd, IDC_COMBO_COLORSPACE, (lang == UILanguage::Chinese ? spacesZh : (lang == UILanguage::English ? spacesEn : spacesJa)), 3);
+        const wchar_t* spacesJa[] = { L"BT.709 (標準HD)", L"BT.601 (SD)" };
+        const wchar_t* spacesEn[] = { L"BT.709 (Standard HD)", L"BT.601 (SD)" };
+        RepopulateCombo(hwnd, IDC_COMBO_COLORSPACE, (lang == UILanguage::English ? spacesEn : spacesJa), 2);
 
         const wchar_t* rangesJa[] = { L"TV (Limited)", L"PC (Full)" };
         const wchar_t* rangesEn[] = { L"TV (Limited)", L"PC (Full)" };
-        const wchar_t* rangesZh[] = { L"TV (Limited/受限)", L"PC (Full/全范围)" };
-        RepopulateCombo(hwnd, IDC_COMBO_COLOR_RANGE, (lang == UILanguage::Chinese ? rangesZh : (lang == UILanguage::English ? rangesEn : rangesJa)), 2);
+        RepopulateCombo(hwnd, IDC_COMBO_COLOR_RANGE, (lang == UILanguage::English ? rangesEn : rangesJa), 2);
 
-        const wchar_t* langs[] = { tr(L"自動 (System)", L"Auto (System)", L"自动 (System)"), L"日本語", L"English", L"简体中文" };
-        RepopulateCombo(hwnd, IDC_COMBO_LANGUAGE, langs, 4);
+        const wchar_t* langs[] = { tr(L"自動 (System)", L"Auto (System)"), L"日本語", L"English" };
+        RepopulateCombo(hwnd, IDC_COMBO_LANGUAGE, langs, 3);
     }
 
+    void ReadConfigFromUI(HWND hwnd, EncoderConfig& cfg);
+
     void UpdateControlsState(HWND hwnd) {
-        bool isAlpha = IsDlgButtonChecked(hwnd, IDC_CHECK_ALPHA) == BST_CHECKED;
-        EnableWindow(GetDlgItem(hwnd, IDC_COMBO_FORMAT), !isAlpha);
-        EnableWindow(GetDlgItem(hwnd, IDC_COMBO_ALPHA_FORMAT), isAlpha);
+        EncoderConfig cfg;
+        ReadConfigFromUI(hwnd, cfg);
+        cfg.ValidateAndCorrect();
 
-        bool isSeq = false;
-        if (isAlpha) {
-            int aFmtIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_GETCURSEL, 0, 0));
-            if (aFmtIdx == 2) isSeq = true;
-        } else {
-            int fmtIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_FORMAT, CB_GETCURSEL, 0, 0));
-            if (fmtIdx == 5 || fmtIdx == 6) isSeq = true;
-        }
+        bool isAlpha = cfg.alpha_enabled;
+        std::wstring fmt = isAlpha ? cfg.alpha_format : cfg.format;
+        bool interFrame = !isAlpha && (fmt == L"h264" || fmt == L"hevc" || fmt == L"av1" || fmt == L"av1webm" || fmt == L"vp9");
+        bool interFrameAlpha = isAlpha && fmt == L"vp9";
+        bool hardware = cfg.UsesHardwareBackend();
 
-        if (isSeq) {
-            EnableWindow(GetDlgItem(hwnd, IDC_COMBO_BACKEND), FALSE);
-            EnableWindow(GetDlgItem(hwnd, IDC_EDIT_CRF), FALSE);
-            EnableWindow(GetDlgItem(hwnd, IDC_SPIN_CRF), FALSE);
-        } else {
-            EnableWindow(GetDlgItem(hwnd, IDC_COMBO_BACKEND), TRUE);
-            EnableWindow(GetDlgItem(hwnd, IDC_EDIT_CRF), TRUE);
-            EnableWindow(GetDlgItem(hwnd, IDC_SPIN_CRF), TRUE);
-        }
+        auto enable = [hwnd](int id, bool on) { EnableWindow(GetDlgItem(hwnd, id), on ? TRUE : FALSE); };
 
+        enable(IDC_COMBO_FORMAT, !isAlpha);
+        enable(IDC_COMBO_ALPHA_FORMAT, isAlpha);
+        enable(IDC_COMBO_BACKEND, hardware);
+        enable(IDC_EDIT_CRF, cfg.UsesQuality());
+        enable(IDC_SPIN_CRF, cfg.UsesQuality());
+        SendDlgItemMessageW(hwnd, IDC_SPIN_CRF, UDM_SETRANGE, 0, MAKELPARAM(EncoderConfig::MaxQuality(fmt), 0));
+        enable(IDC_CHECK_AUDIO, !cfg.IsImageSequence());
+
+        enable(IDC_COMBO_BIT_DEPTH, interFrame);
+        enable(IDC_COMBO_CHROMA, interFrame && fmt != L"av1" && fmt != L"av1webm");
+        enable(IDC_COMBO_COLORSPACE, cfg.UsesYuv());
+        enable(IDC_COMBO_COLOR_RANGE, cfg.UsesYuv());
+        enable(IDC_CHECK_GOP_AUTO, interFrame || interFrameAlpha);
         bool autoGop = IsDlgButtonChecked(hwnd, IDC_CHECK_GOP_AUTO) == BST_CHECKED;
-        EnableWindow(GetDlgItem(hwnd, IDC_EDIT_GOP), !autoGop);
+        enable(IDC_EDIT_GOP, (interFrame || interFrameAlpha) && !autoGop);
+        enable(IDC_EDIT_BFRAMES, interFrame && (fmt == L"h264" || fmt == L"hevc"));
+        enable(IDC_EDIT_LOOKAHEAD, hardware && (cfg.backend == L"auto" || cfg.backend == L"nvidia"));
     }
 
     void PopulateUIFromConfig(HWND hwnd, const EncoderConfig& cfg) {
-        SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_SETCURSEL, static_cast<WPARAM>(cfg.preset), 0);
+        SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_SETCURSEL, static_cast<WPARAM>(PresetToIndex(cfg.preset)), 0);
 
-        int fmtIdx = 0;
-        if (cfg.format == L"hevc") fmtIdx = 1;
-        else if (cfg.format == L"av1") fmtIdx = 2;
-        else if (cfg.format == L"vp9") fmtIdx = 3;
-        else if (cfg.format == L"prores") fmtIdx = 4;
-        else if (cfg.format == L"png") fmtIdx = 5;
-        else if (cfg.format == L"jpg" || cfg.format == L"jpeg") fmtIdx = 6;
-        SendDlgItemMessageW(hwnd, IDC_COMBO_FORMAT, CB_SETCURSEL, fmtIdx, 0);
+        SendDlgItemMessageW(hwnd, IDC_COMBO_FORMAT, CB_SETCURSEL, KeyToIndex(kVideoFormatKeys, kVideoFormatCount, cfg.format), 0);
 
         BackendItemData targetBackendId = BACKEND_AUTO;
         if (cfg.backend == L"nvidia") targetBackendId = BACKEND_NVIDIA;
@@ -318,13 +336,10 @@ namespace {
         SetDlgItemInt(hwnd, IDC_EDIT_CRF, cfg.crf, FALSE);
 
         CheckDlgButton(hwnd, IDC_CHECK_AUDIO, cfg.audio_enabled ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hwnd, IDC_CHECK_DELETE_AVI, cfg.delete_avi ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hwnd, IDC_CHECK_ALPHA, cfg.alpha_enabled ? BST_CHECKED : BST_UNCHECKED);
 
-        int aFmtIdx = 0;
-        if (cfg.alpha_format == L"vp9") aFmtIdx = 1;
-        else if (cfg.alpha_format == L"png") aFmtIdx = 2;
-        else if (cfg.alpha_format == L"ffv1") aFmtIdx = 3;
-        SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_SETCURSEL, aFmtIdx, 0);
+        SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_SETCURSEL, KeyToIndex(kAlphaFormatKeys, kAlphaFormatCount, cfg.alpha_format), 0);
 
         SendDlgItemMessageW(hwnd, IDC_COMBO_BIT_DEPTH, CB_SETCURSEL, cfg.bit_depth == 10 ? 1 : 0, 0);
 
@@ -335,7 +350,6 @@ namespace {
 
         int csIdx = 0;
         if (cfg.colorspace == L"bt601") csIdx = 1;
-        else if (cfg.colorspace == L"bt2020") csIdx = 2;
         SendDlgItemMessageW(hwnd, IDC_COMBO_COLORSPACE, CB_SETCURSEL, csIdx, 0);
 
         SendDlgItemMessageW(hwnd, IDC_COMBO_COLOR_RANGE, CB_SETCURSEL, cfg.color_range == L"pc" ? 1 : 0, 0);
@@ -347,25 +361,14 @@ namespace {
         SetDlgItemInt(hwnd, IDC_EDIT_BFRAMES, cfg.b_frames, FALSE);
         SetDlgItemInt(hwnd, IDC_EDIT_LOOKAHEAD, cfg.lookahead, FALSE);
 
-        SetDlgItemTextW(hwnd, IDC_EDIT_EXTRA_ARGS, cfg.extra_args.c_str());
-
         SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_SETCURSEL, cfg.ui_language, 0);
         UpdateControlsState(hwnd);
     }
 
     void ReadConfigFromUI(HWND hwnd, EncoderConfig& cfg) {
-        cfg.preset = static_cast<PresetType>(SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_GETCURSEL, 0, 0));
+        cfg.preset = IndexToPreset(static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_GETCURSEL, 0, 0)));
 
-        int fmtIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_FORMAT, CB_GETCURSEL, 0, 0));
-        switch (fmtIdx) {
-        case 1: cfg.format = L"hevc"; break;
-        case 2: cfg.format = L"av1"; break;
-        case 3: cfg.format = L"vp9"; break;
-        case 4: cfg.format = L"prores"; break;
-        case 5: cfg.format = L"png"; break;
-        case 6: cfg.format = L"jpg"; break;
-        default: cfg.format = L"h264"; break;
-        }
+        cfg.format = IndexToKey(kVideoFormatKeys, kVideoFormatCount, static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_FORMAT, CB_GETCURSEL, 0, 0)));
 
         int bkCur = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_BACKEND, CB_GETCURSEL, 0, 0));
         BackendItemData bkData = BACKEND_AUTO;
@@ -383,15 +386,10 @@ namespace {
         cfg.crf = GetDlgItemInt(hwnd, IDC_EDIT_CRF, NULL, FALSE);
 
         cfg.audio_enabled = IsDlgButtonChecked(hwnd, IDC_CHECK_AUDIO) == BST_CHECKED;
+        cfg.delete_avi = IsDlgButtonChecked(hwnd, IDC_CHECK_DELETE_AVI) == BST_CHECKED;
         cfg.alpha_enabled = IsDlgButtonChecked(hwnd, IDC_CHECK_ALPHA) == BST_CHECKED;
 
-        int aFmtIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_GETCURSEL, 0, 0));
-        switch (aFmtIdx) {
-        case 1: cfg.alpha_format = L"vp9"; break;
-        case 2: cfg.alpha_format = L"png"; break;
-        case 3: cfg.alpha_format = L"ffv1"; break;
-        default: cfg.alpha_format = L"prores"; break;
-        }
+        cfg.alpha_format = IndexToKey(kAlphaFormatKeys, kAlphaFormatCount, static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_GETCURSEL, 0, 0)));
 
         cfg.bit_depth = SendDlgItemMessageW(hwnd, IDC_COMBO_BIT_DEPTH, CB_GETCURSEL, 0, 0) == 1 ? 10 : 8;
 
@@ -405,7 +403,6 @@ namespace {
         int csIdx = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_COLORSPACE, CB_GETCURSEL, 0, 0));
         switch (csIdx) {
         case 1: cfg.colorspace = L"bt601"; break;
-        case 2: cfg.colorspace = L"bt2020"; break;
         default: cfg.colorspace = L"bt709"; break;
         }
 
@@ -415,10 +412,6 @@ namespace {
         cfg.gop_size = GetDlgItemInt(hwnd, IDC_EDIT_GOP, NULL, FALSE);
         cfg.b_frames = GetDlgItemInt(hwnd, IDC_EDIT_BFRAMES, NULL, FALSE);
         cfg.lookahead = GetDlgItemInt(hwnd, IDC_EDIT_LOOKAHEAD, NULL, FALSE);
-
-        std::vector<wchar_t> largeBuf(4096);
-        GetDlgItemTextW(hwnd, IDC_EDIT_EXTRA_ARGS, largeBuf.data(), 4096);
-        cfg.extra_args = largeBuf.data();
 
         cfg.ui_language = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCURSEL, 0, 0));
     }
@@ -481,15 +474,16 @@ namespace {
             if (state && !state->initializing) {
                 if (id == IDC_COMBO_PRESET && code == CBN_SELCHANGE) {
                     int sel = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_GETCURSEL, 0, 0));
-                    if (sel >= 0 && sel < 8) {
-                        state->config->ApplyPreset(static_cast<PresetType>(sel));
+                    if (sel >= 0 && IndexToPreset(sel) != PresetType::Custom) {
+                        state->config->ApplyPreset(IndexToPreset(sel));
                         state->initializing = true;
                         PopulateUIFromConfig(hwnd, *(state->config));
                         state->initializing = false;
                     }
                 } else if (code == CBN_SELCHANGE || code == EN_CHANGE || code == BN_CLICKED) {
                     if (id == IDC_CHECK_ALPHA || id == IDC_COMBO_ALPHA_FORMAT ||
-                        id == IDC_COMBO_FORMAT || id == IDC_CHECK_GOP_AUTO) {
+                        id == IDC_COMBO_FORMAT || id == IDC_CHECK_GOP_AUTO ||
+                        id == IDC_COMBO_BACKEND || id == IDC_COMBO_COLORSPACE) {
                         UpdateControlsState(hwnd);
                     } else if (id == IDC_COMBO_LANGUAGE && code == CBN_SELCHANGE) {
                         int selLang = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCURSEL, 0, 0));
@@ -508,8 +502,9 @@ namespace {
                         state->initializing = false;
                     }
 
-                    if (id != IDC_COMBO_PRESET && id != IDC_COMBO_LANGUAGE && id != IDC_BUTTON_TEST && id != IDC_BUTTON_OPEN_LOG && id != IDOK && id != IDCANCEL) {
-                        SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_SETCURSEL, static_cast<WPARAM>(PresetType::Custom), 0);
+                    if (id != IDC_COMBO_PRESET && id != IDC_COMBO_LANGUAGE && id != IDC_BUTTON_TEST && id != IDC_BUTTON_OPEN_LOG &&
+                        id != IDC_CHECK_DELETE_AVI && id != IDOK && id != IDCANCEL) {
+                        SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_SETCURSEL, static_cast<WPARAM>(PresetToIndex(PresetType::Custom)), 0);
                     }
                 }
             }
@@ -521,7 +516,7 @@ namespace {
                 std::wstring msg;
                 bool ok = EncoderController::RunEncoderTest(temp, msg);
                 UILanguage curLang = ResolveLanguage(temp.ui_language);
-                std::wstring testTitle = (curLang == UILanguage::Chinese) ? L"编码器测试" : (curLang == UILanguage::English ? L"Encoder Test" : L"エンコーダーテスト");
+                std::wstring testTitle = (curLang == UILanguage::English) ? L"Encoder Test" : L"エンコーダーテスト";
                 MessageBoxW(hwnd, msg.c_str(), testTitle.c_str(), ok ? (MB_OK | MB_ICONINFORMATION) : (MB_OK | MB_ICONWARNING));
                 return TRUE;
             }

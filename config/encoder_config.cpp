@@ -48,7 +48,7 @@ std::wstring EncoderConfig::GetDefaultIniPath() {
     }
     wchar_t localAppData[MAX_PATH] = {};
     if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData))) {
-        std::wstring baseDir = std::wstring(localAppData) + L"\\MMDirect Encoder";
+        std::wstring baseDir = std::wstring(localAppData) + L"\\MMDirectEncoder";
         CreateDirectoryW(baseDir.c_str(), NULL);
         return baseDir + L"\\MMDirectEncoder.ini";
     }
@@ -69,7 +69,7 @@ std::wstring EncoderConfig::GetLogDirectoryPath() {
     }
     wchar_t localAppData[MAX_PATH] = {};
     if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData))) {
-        std::wstring logDir = std::wstring(localAppData) + L"\\MMDirect Encoder\\logs";
+        std::wstring logDir = std::wstring(localAppData) + L"\\MMDirectEncoder\\logs";
         CreateDirectoryW(logDir.c_str(), NULL);
         return logDir;
     }
@@ -110,7 +110,6 @@ void EncoderConfig::ApplyPreset(PresetType type) {
         format = L"h264";
         backend = L"auto";
         crf = 18;
-        container = L"mp4";
         alpha_enabled = false;
         bit_depth = 8;
         chroma = L"yuv420p";
@@ -123,7 +122,6 @@ void EncoderConfig::ApplyPreset(PresetType type) {
         format = L"hevc";
         backend = L"auto";
         crf = 20;
-        container = L"mp4";
         alpha_enabled = false;
         bit_depth = 8;
         chroma = L"yuv420p";
@@ -136,7 +134,6 @@ void EncoderConfig::ApplyPreset(PresetType type) {
         format = L"av1";
         backend = L"auto";
         crf = 24;
-        container = L"mp4";
         alpha_enabled = false;
         bit_depth = 8;
         chroma = L"yuv420p";
@@ -149,7 +146,6 @@ void EncoderConfig::ApplyPreset(PresetType type) {
         format = L"h264";
         backend = L"auto";
         crf = 18;
-        container = L"mp4";
         alpha_enabled = false;
         bit_depth = 8;
         chroma = L"yuv420p";
@@ -160,106 +156,122 @@ void EncoderConfig::ApplyPreset(PresetType type) {
         b_frames = 2;
         break;
     case PresetType::Editing:
-        format = L"prores";
-        backend = L"cpu";
-        container = L"mov";
+        format = L"prores422hq";
         alpha_enabled = false;
-        bit_depth = 10;
-        chroma = L"yuv422p10le";
         colorspace = L"bt709";
         color_range = L"tv";
-        gop_auto = false;
-        gop_size = 1;
-        b_frames = 0;
         break;
     case PresetType::Transparent:
         alpha_enabled = true;
-        alpha_format = L"prores";
-        format = L"prores";
-        backend = L"cpu";
-        container = L"mov";
-        bit_depth = 10;
-        chroma = L"yuva444p10le";
-        colorspace = L"bt709";
-        color_range = L"tv";
-        break;
-    case PresetType::Lossless:
-        format = L"h264";
-        backend = L"auto";
-        crf = 0;
-        container = L"mp4";
-        alpha_enabled = false;
-        bit_depth = 8;
-        chroma = L"yuv420p";
+        alpha_format = L"prores4444";
         colorspace = L"bt709";
         color_range = L"tv";
         break;
     case PresetType::PNGSequence:
         format = L"png";
-        backend = L"cpu";
-        crf = 0;
-        container = L"png";
         alpha_enabled = false;
-        bit_depth = 8;
-        chroma = L"rgb24";
-        colorspace = L"bt709";
-        color_range = L"tv";
         break;
+    case PresetType::LegacyLossless:
+    case PresetType::LegacyUtVideo:
     case PresetType::Custom:
         break;
     }
+    ValidateAndCorrect();
+}
+
+namespace {
+    std::wstring BaseChroma(std::wstring chroma) {
+        if (chroma.size() > 4 && chroma.compare(chroma.size() - 4, 4, L"10le") == 0) {
+            chroma.erase(chroma.size() - 4);
+        }
+        if (chroma != L"yuv420p" && chroma != L"yuv422p" && chroma != L"yuv444p") {
+            chroma = L"yuv420p";
+        }
+        return chroma;
+    }
+
+    bool IsVideoFormat(const std::wstring& f) {
+        return f == L"h264" || f == L"hevc" || f == L"av1" || f == L"prores422" || f == L"prores422hq" || f == L"vp9" || f == L"av1webm";
+    }
+
+    bool IsAlphaFormat(const std::wstring& f) {
+        return f == L"prores4444" || f == L"prores4444xq" || f == L"vp9" || f == L"png" || f == L"exr";
+    }
+}
+
+std::wstring EncoderConfig::EffectiveFormat() const {
+    return alpha_enabled ? alpha_format : format;
+}
+
+int EncoderConfig::MaxQuality(const std::wstring& fmt) {
+    return (fmt == L"vp9" || fmt == L"av1" || fmt == L"av1webm") ? 63 : 51;
+}
+
+bool EncoderConfig::IsImageSequence() const {
+    std::wstring f = EffectiveFormat();
+    return f == L"jpg" || f == L"png" || f == L"exr";
+}
+
+bool EncoderConfig::IsProRes() const {
+    return EffectiveFormat().compare(0, 6, L"prores") == 0;
+}
+
+bool EncoderConfig::UsesYuv() const {
+    std::wstring f = EffectiveFormat();
+    return f == L"h264" || f == L"hevc" || f == L"av1" || f == L"av1webm" || f == L"vp9" || IsProRes();
+}
+
+bool EncoderConfig::UsesQuality() const {
+    std::wstring f = EffectiveFormat();
+    return f == L"h264" || f == L"hevc" || f == L"av1" || f == L"av1webm" || f == L"vp9";
+}
+
+bool EncoderConfig::UsesHardwareBackend() const {
+    return !alpha_enabled && (format == L"h264" || format == L"hevc" || format == L"av1" || format == L"av1webm");
 }
 
 void EncoderConfig::ValidateAndCorrect() {
-    if (alpha_enabled) {
-        if (alpha_format == L"prores") {
-            container = L"mov";
-            format = L"prores";
-            backend = L"cpu";
-            chroma = L"yuva444p10le";
-            bit_depth = 10;
-        } else if (alpha_format == L"vp9") {
-            container = L"webm";
-            format = L"vp9";
-            backend = L"cpu";
-            chroma = L"yuva420p";
-            bit_depth = 8;
-        } else if (alpha_format == L"png" || format == L"png") {
-            container = L"png";
-            format = L"png";
-            backend = L"cpu";
-            chroma = L"rgba";
-            bit_depth = 8;
-        } else {
-            container = L"mkv";
-            format = L"ffv1";
-            backend = L"cpu";
-            chroma = L"yuva444p";
-            bit_depth = 8;
-        }
-    } else {
-        if (format == L"prores") {
-            container = L"mov";
-        } else if (format == L"vp9") {
-            container = L"webm";
-        } else if (format == L"ffv1") {
-            container = L"mkv";
-        } else if (format == L"png") {
-            container = L"png";
-            backend = L"cpu";
-            chroma = L"rgb24";
-            bit_depth = 8;
-        } else if (format == L"jpg" || format == L"jpeg") {
-            container = L"jpg";
-            backend = L"cpu";
-            chroma = L"yuvj420p";
-            bit_depth = 8;
-        } else if (container.empty() || container == L"mov" || container == L"webm" || container == L"png" || container == L"jpg") {
-            container = L"mp4";
-        }
+    if (format == L"prores") format = L"prores422hq";
+    if (format == L"jpeg") format = L"jpg";
+    if (alpha_format == L"prores") alpha_format = L"prores4444";
+    if (!IsVideoFormat(format) && format != L"jpg" && format != L"png" && format != L"exr") {
+        format = L"h264";
+    }
+    if (!IsAlphaFormat(alpha_format)) {
+        alpha_format = L"prores4444";
     }
 
-    crf = (std::max)(0, (std::min)(51, crf));
+    std::wstring f = EffectiveFormat();
+    if (f == L"h264" || f == L"hevc" || f == L"av1" || f == L"av1webm") {
+        container = (f == L"av1webm") ? L"webm" : L"mp4";
+        chroma = BaseChroma(chroma);
+        if (f == L"av1" || f == L"av1webm") chroma = L"yuv420p";
+    } else if (IsProRes()) {
+        container = L"mov";
+        backend = L"cpu";
+    } else if (f == L"vp9") {
+        container = L"webm";
+        backend = L"cpu";
+        if (!alpha_enabled) chroma = BaseChroma(chroma);
+    } else {
+        container = f;
+        backend = L"cpu";
+    }
+
+    if (backend != L"auto" && backend != L"nvidia" && backend != L"intel" && backend != L"amd" && backend != L"cpu") {
+        backend = L"auto";
+    }
+    if (colorspace != L"bt709" && colorspace != L"bt601") {
+        colorspace = L"bt709";
+    }
+    if (color_range != L"tv" && color_range != L"pc") {
+        color_range = L"tv";
+    }
+    if (bit_depth != 8 && bit_depth != 10) {
+        bit_depth = 8;
+    }
+
+    crf = (std::max)(0, (std::min)(MaxQuality(f), crf));
 
     if (gop_size <= 0) gop_size = 250;
     b_frames = (std::max)(0, (std::min)(16, b_frames));
@@ -283,8 +295,11 @@ bool EncoderConfig::Load(const std::wstring& path) {
 
     wchar_t buf[2048] = {};
 
-    preset = static_cast<PresetType>(GetPrivateProfileIntW(L"general", L"preset", 0, ini.c_str()));
+    int presetValue = GetPrivateProfileIntW(L"general", L"preset", 0, ini.c_str());
+    preset = (presetValue >= 0 && presetValue <= static_cast<int>(PresetType::LegacyUtVideo)) ? static_cast<PresetType>(presetValue) : PresetType::Custom;
+    if (preset == PresetType::LegacyLossless || preset == PresetType::LegacyUtVideo) preset = PresetType::Custom;
     ui_language = GetPrivateProfileIntW(L"general", L"language", 0, ini.c_str());
+    if (ui_language < 0 || ui_language > 2) ui_language = 0;
 
     GetPrivateProfileStringW(L"video", L"format", L"h264", buf, 2048, ini.c_str());
     format = LowerString(TrimString(buf));
@@ -296,7 +311,7 @@ bool EncoderConfig::Load(const std::wstring& path) {
 
     audio_enabled = GetPrivateProfileIntW(L"video", L"audio_enabled", 1, ini.c_str()) != 0;
     alpha_enabled = GetPrivateProfileIntW(L"video", L"alpha_enabled", 0, ini.c_str()) != 0;
-    GetPrivateProfileStringW(L"video", L"alpha_format", L"prores", buf, 2048, ini.c_str());
+    GetPrivateProfileStringW(L"video", L"alpha_format", L"prores4444", buf, 2048, ini.c_str());
     alpha_format = LowerString(TrimString(buf));
 
     bit_depth = GetPrivateProfileIntW(L"advanced", L"bit_depth", 8, ini.c_str());
@@ -313,9 +328,6 @@ bool EncoderConfig::Load(const std::wstring& path) {
     gop_size = GetPrivateProfileIntW(L"advanced", L"gop_size", 250, ini.c_str());
     b_frames = GetPrivateProfileIntW(L"advanced", L"b_frames", 3, ini.c_str());
     lookahead = GetPrivateProfileIntW(L"advanced", L"lookahead", 0, ini.c_str());
-
-    GetPrivateProfileStringW(L"advanced", L"extra_args", L"", buf, 2048, ini.c_str());
-    extra_args = TrimString(buf);
 
     GetPrivateProfileStringW(L"output", L"container", L"mp4", buf, 2048, ini.c_str());
     container = LowerString(TrimString(buf));
@@ -360,7 +372,6 @@ bool EncoderConfig::Save(const std::wstring& path) const {
     WriteInt(L"advanced", L"gop_size", gop_size);
     WriteInt(L"advanced", L"b_frames", b_frames);
     WriteInt(L"advanced", L"lookahead", lookahead);
-    WriteStr(L"advanced", L"extra_args", extra_args);
 
     WriteStr(L"output", L"container", container);
     WriteInt(L"output", L"delete_avi", delete_avi ? 1 : 0);

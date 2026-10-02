@@ -24,7 +24,7 @@
 #define IDC_EDIT_BFRAMES            1026
 #define IDC_EDIT_LOOKAHEAD          1027
 
-#define IDC_EDIT_EXTRA_ARGS         1034
+#define IDC_CHECK_DELETE_AVI        1035
 
 #define IDC_COMBO_LANGUAGE          1036
 #define IDC_BUTTON_TEST             1037
@@ -41,5 +41,4 @@
 #define IDC_STATIC_GOP              1113
 #define IDC_STATIC_BFRAMES          1114
 #define IDC_STATIC_LOOKAHEAD        1115
-#define IDC_STATIC_EXTRA_ARGS       1118
 #define IDC_STATIC_LANGUAGE         1120

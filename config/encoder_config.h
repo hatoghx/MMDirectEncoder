@@ -10,9 +10,10 @@ enum class PresetType {
     YouTube,
     Editing,
     Transparent,
-    Lossless,
+    LegacyLossless,
     PNGSequence,
-    Custom
+    Custom,
+    LegacyUtVideo
 };
 
 struct EncoderConfig {
@@ -22,7 +23,7 @@ struct EncoderConfig {
     int crf = 18;
     bool audio_enabled = true;
     bool alpha_enabled = false;
-    std::wstring alpha_format = L"prores";
+    std::wstring alpha_format = L"prores4444";
 
     int bit_depth = 8;
     std::wstring chroma = L"yuv420p";
@@ -34,8 +35,6 @@ struct EncoderConfig {
     int b_frames = 3;
     int lookahead = 0;
 
-    std::wstring extra_args;
-
     std::wstring container = L"mp4";
     bool delete_avi = true;
     bool merge_audio = true;
@@ -46,8 +45,15 @@ struct EncoderConfig {
     static std::wstring GetDefaultIniPath();
     static std::wstring GetLogDirectoryPath();
     static std::wstring ResolveExecutable(const std::wstring& name, const std::wstring& customPath);
+    static int MaxQuality(const std::wstring& format);
     void ApplyPreset(PresetType type);
     void ValidateAndCorrect();
+    std::wstring EffectiveFormat() const;
+    bool IsImageSequence() const;
+    bool IsProRes() const;
+    bool UsesYuv() const;
+    bool UsesQuality() const;
+    bool UsesHardwareBackend() const;
     bool Load(const std::wstring& path = L"");
     bool Save(const std::wstring& path = L"") const;
 };
