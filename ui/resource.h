@@ -24,7 +24,6 @@
 #define IDC_EDIT_BFRAMES            1026
 #define IDC_EDIT_LOOKAHEAD          1027
 
-#define IDC_CHECK_DELETE_AVI        1035
 
 #define IDC_COMBO_LANGUAGE          1036
 #define IDC_BUTTON_TEST             1037

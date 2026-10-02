@@ -372,12 +372,19 @@ int EncoderController::DigitCount(long long value) {
 
 std::wstring EncoderController::Utf8ToWide(const std::string& s) {
     if (s.empty()) return std::wstring();
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), NULL, 0);
+    UINT codePage = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    int n = MultiByteToWideChar(codePage, flags, s.data(), static_cast<int>(s.size()), NULL, 0);
+    if (n <= 0) {
+        codePage = CP_ACP;
+        flags = 0;
+        n = MultiByteToWideChar(codePage, flags, s.data(), static_cast<int>(s.size()), NULL, 0);
+    }
     if (n <= 0) {
         return std::wstring(s.begin(), s.end());
     }
     std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &w[0], n);
+    MultiByteToWideChar(codePage, flags, s.data(), static_cast<int>(s.size()), &w[0], n);
     return w;
 }
 
@@ -614,9 +621,7 @@ ExecutionPlan EncoderController::PrepareExecutionPlan(const EncoderConfig& confi
         cmd += L" -vf vflip";
     }
     cmd += L" -c:v libx264 -preset ultrafast -pix_fmt yuv420p";
-    if (config.delete_avi) {
-        cmd += L" -crf 51";
-    }
+    cmd += L" -crf 51";
     cmd += L" -f h264 pipe:1";
 
     plan.main_command = cmd;

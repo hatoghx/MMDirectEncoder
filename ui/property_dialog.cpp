@@ -58,7 +58,7 @@ namespace {
         IDC_CHECK_ALPHA, IDC_COMBO_ALPHA_FORMAT,
         IDC_STATIC_BACKEND, IDC_COMBO_BACKEND,
         IDC_STATIC_QUALITY, IDC_EDIT_CRF, IDC_SPIN_CRF,
-        IDC_CHECK_AUDIO, IDC_CHECK_DELETE_AVI
+        IDC_CHECK_AUDIO
     };
 
     const PresetType kPresetOrder[] = {
@@ -169,7 +169,6 @@ namespace {
         SetDlgItemTextW(hwnd, IDC_STATIC_QUALITY, tr(L"品質 (CRF/QP):", L"Quality (CRF/QP):"));
         SetDlgItemTextW(hwnd, IDC_CHECK_ALPHA, tr(L"透過 (アルファ)", L"Alpha Output"));
         SetDlgItemTextW(hwnd, IDC_CHECK_AUDIO, tr(L"音声を含める (AVI音声を自動結合)", L"Include Audio (Merge AVI Audio)"));
-        SetDlgItemTextW(hwnd, IDC_CHECK_DELETE_AVI, tr(L"変換後に MMD の AVI を削除する", L"Delete the MMD AVI after conversion"));
 
         SetDlgItemTextW(hwnd, IDC_STATIC_BIT_DEPTH, tr(L"ビット深度:", L"Bit Depth:"));
         SetDlgItemTextW(hwnd, IDC_STATIC_COLORSPACE, tr(L"色空間:", L"Color Space:"));
@@ -336,7 +335,6 @@ namespace {
         SetDlgItemInt(hwnd, IDC_EDIT_CRF, cfg.crf, FALSE);
 
         CheckDlgButton(hwnd, IDC_CHECK_AUDIO, cfg.audio_enabled ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hwnd, IDC_CHECK_DELETE_AVI, cfg.delete_avi ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hwnd, IDC_CHECK_ALPHA, cfg.alpha_enabled ? BST_CHECKED : BST_UNCHECKED);
 
         SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_SETCURSEL, KeyToIndex(kAlphaFormatKeys, kAlphaFormatCount, cfg.alpha_format), 0);
@@ -386,7 +384,6 @@ namespace {
         cfg.crf = GetDlgItemInt(hwnd, IDC_EDIT_CRF, NULL, FALSE);
 
         cfg.audio_enabled = IsDlgButtonChecked(hwnd, IDC_CHECK_AUDIO) == BST_CHECKED;
-        cfg.delete_avi = IsDlgButtonChecked(hwnd, IDC_CHECK_DELETE_AVI) == BST_CHECKED;
         cfg.alpha_enabled = IsDlgButtonChecked(hwnd, IDC_CHECK_ALPHA) == BST_CHECKED;
 
         cfg.alpha_format = IndexToKey(kAlphaFormatKeys, kAlphaFormatCount, static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_ALPHA_FORMAT, CB_GETCURSEL, 0, 0)));
@@ -503,7 +500,7 @@ namespace {
                     }
 
                     if (id != IDC_COMBO_PRESET && id != IDC_COMBO_LANGUAGE && id != IDC_BUTTON_TEST && id != IDC_BUTTON_OPEN_LOG &&
-                        id != IDC_CHECK_DELETE_AVI && id != IDOK && id != IDCANCEL) {
+                        id != IDOK && id != IDCANCEL) {
                         SendDlgItemMessageW(hwnd, IDC_COMBO_PRESET, CB_SETCURSEL, static_cast<WPARAM>(PresetToIndex(PresetType::Custom)), 0);
                     }
                 }

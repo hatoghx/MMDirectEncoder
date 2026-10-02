@@ -36,7 +36,6 @@ struct EncoderConfig {
     int lookahead = 0;
 
     std::wstring container = L"mp4";
-    bool delete_avi = true;
     bool merge_audio = true;
 
     std::wstring ffmpeg_path;

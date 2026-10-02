@@ -356,6 +356,9 @@ HRESULT CFFmpegEncoder::StopStreaming() {
     bool aborted = !m_eosReceived;
     StopFFmpeg();
     PostProcessOutputs(aborted);
+    if (!m_aviPath.empty() && !SafeDeleteFileWithRetry(m_aviPath)) {
+        m_aviDeletePending = true;
+    }
     m_started = false;
     m_launchPending = false;
     return S_OK;
@@ -538,11 +541,11 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
         EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, 0, exitCode, elapsed,
                                           m_pipeFailed ? L"Failed: ffmpeg could not start" : (aborted ? L"Aborted before the first frame" : L"No frames received"), m_stderrBuffer);
         if (m_pipeFailed && m_ffmpegMissing) {
-            NotifyProblem(tr(L"変換に使う ffmpeg.exe が見つかりませんでした。\n\n考えられる原因: ファイルが削除された、またはウイルス対策ソフトに隔離された。\n対処: MMDirectEncoder のインストーラーをもう一度実行してください。\n\nMMD の AVI は削除していません。",
-                             L"ffmpeg.exe, which is used for conversion, was not found.\n\nPossible cause: the file was deleted or quarantined by antivirus software.\nWhat to do: run the MMDirectEncoder installer again.\n\nThe AVI written by MMD has been kept."));
+            NotifyProblem(tr(L"変換に使う ffmpeg.exe が見つかりませんでした。\n\n考えられる原因: ファイルが削除された、またはウイルス対策ソフトに隔離された。\n対処: MMDirectEncoder のインストーラーをもう一度実行してください。",
+                             L"ffmpeg.exe, which is used for conversion, was not found.\n\nPossible cause: the file was deleted or quarantined by antivirus software.\nWhat to do: run the MMDirectEncoder installer again."));
         } else if (m_pipeFailed) {
-            NotifyProblem(tr(L"ffmpeg.exe を起動できない、またはすぐに止まりました。\n\n考えられる原因: ウイルス対策ソフトが実行を止めた、またはファイルが壊れている。\n対処: インストーラーをもう一度実行し、それでも直らない場合はウイルス対策ソフトの除外設定に MMDirectEncoder のフォルダーを追加してください。\n\nMMD の AVI は削除していません。" + LastErrorLine(),
-                             L"ffmpeg.exe could not be started or stopped immediately.\n\nPossible cause: antivirus software blocked it, or the file is damaged.\nWhat to do: run the installer again. If that does not help, add the MMDirectEncoder folder to the antivirus exclusions.\n\nThe AVI written by MMD has been kept." + LastErrorLine()));
+            NotifyProblem(tr(L"ffmpeg.exe を起動できない、またはすぐに止まりました。\n\n考えられる原因: ウイルス対策ソフトが実行を止めた、またはファイルが壊れている。\n対処: インストーラーをもう一度実行し、それでも直らない場合はウイルス対策ソフトの除外設定に MMDirectEncoder のフォルダーを追加してください。" + LastErrorLine(),
+                             L"ffmpeg.exe could not be started or stopped immediately.\n\nPossible cause: antivirus software blocked it, or the file is damaged.\nWhat to do: run the installer again. If that does not help, add the MMDirectEncoder folder to the antivirus exclusions." + LastErrorLine()));
         }
         return;
     }
@@ -551,11 +554,11 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
         EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, m_framesReceived, exitCode, elapsed,
                                           (aborted && !m_pipeFailed && !m_nativeFailed) ? L"Aborted" : L"Failed", m_stderrBuffer);
         if (m_nativeFailed) {
-            NotifyProblem(tr(L"EXR ファイルを書き込めませんでした。\n\n考えられる原因: 保存先の空き容量不足、書き込みできない場所（保護されたフォルダーなど）。\n対処: 空き容量を確保するか、ドキュメントなど書き込みできる場所へ保存し直してください。\n\nMMD の AVI は削除していません。",
-                             L"The EXR files could not be written.\n\nPossible cause: not enough free space, or the destination cannot be written to (for example a protected folder).\nWhat to do: free up space or save to a writable place such as Documents.\n\nThe AVI written by MMD has been kept."));
+            NotifyProblem(tr(L"EXR ファイルを書き込めませんでした。\n\n考えられる原因: 保存先の空き容量不足、書き込みできない場所（保護されたフォルダーなど）。\n対処: 空き容量を確保するか、ドキュメントなど書き込みできる場所へ保存し直してください。",
+                             L"The EXR files could not be written.\n\nPossible cause: not enough free space, or the destination cannot be written to (for example a protected folder).\nWhat to do: free up space or save to a writable place such as Documents."));
         } else if (!aborted || m_pipeFailed) {
-            NotifyProblem(tr(L"変換が途中で止まりました。\n\n考えられる原因: 保存先の空き容量不足、GPU ドライバーの不具合、設定とビデオカードの組み合わせ。\n対処: 空き容量を確認し、それでも直らない場合は設定画面で「エンコーダー」を「CPU」にして出力し直してください。\n\nMMD の AVI は削除していません。" + LastErrorLine(),
-                             L"The conversion stopped partway.\n\nPossible cause: not enough free space, a GPU driver problem, or settings the video card does not support.\nWhat to do: check free space. If that does not help, set Encoder to CPU in the settings and export again.\n\nThe AVI written by MMD has been kept." + LastErrorLine()));
+            NotifyProblem(tr(L"変換が途中で止まりました。\n\n考えられる原因: 保存先の空き容量不足、GPU ドライバーの不具合、設定とビデオカードの組み合わせ。\n対処: 空き容量を確認し、それでも直らない場合は設定画面で「エンコーダー」を「CPU」にして出力し直してください。" + LastErrorLine(),
+                             L"The conversion stopped partway.\n\nPossible cause: not enough free space, a GPU driver problem, or settings the video card does not support.\nWhat to do: check free space. If that does not help, set Encoder to CPU in the settings and export again." + LastErrorLine()));
         }
         return;
     }
@@ -573,8 +576,8 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
                              L"The destination could not be obtained from MMD, so nothing was exported.\nWhat to do: run MMD's AVI export again."));
             return;
         }
-        NotifyProblem(tr(L"変換後のファイルが見つかりませんでした。\n\n考えられる原因: 保存先に書き込めない、またはウイルス対策ソフトがファイルを削除した。\n対処: ドキュメントなど書き込みできる場所へ保存し直してください。\n\nMMD の AVI は削除していません。",
-                         L"The converted file was not found.\n\nPossible cause: the destination cannot be written to, or antivirus software removed the file.\nWhat to do: save to a writable place such as Documents.\n\nThe AVI written by MMD has been kept."));
+        NotifyProblem(tr(L"変換後のファイルが見つかりませんでした。\n\n考えられる原因: 保存先に書き込めない、またはウイルス対策ソフトがファイルを削除した。\n対処: ドキュメントなど書き込みできる場所へ保存し直してください。",
+                         L"The converted file was not found.\n\nPossible cause: the destination cannot be written to, or antivirus software removed the file.\nWhat to do: save to a writable place such as Documents."));
         return;
     }
 
@@ -624,15 +627,9 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
             m_stderrBuffer += mergeLog;
         }
         if (!audioOk) {
-            result = L"Succeeded: audio merge failed, AVI kept";
-            problem = tr(L"音声の結合に失敗しました。音声を残すため MMD の AVI は削除していません。",
-                         L"Audio could not be merged. The AVI written by MMD has been kept so the audio is not lost.");
-        }
-    }
-
-    if (m_config.delete_avi && audioOk && aviExists) {
-        if (!SafeDeleteFileWithRetry(m_aviPath)) {
-            m_aviDeletePending = true;
+            result = L"Succeeded: audio merge failed";
+            problem = tr(L"音声を付けられなかったため、映像のみで出力しました。",
+                         L"Audio could not be added, so the file was exported without audio.");
         }
     }
 

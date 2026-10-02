@@ -332,7 +332,6 @@ bool EncoderConfig::Load(const std::wstring& path) {
     GetPrivateProfileStringW(L"output", L"container", L"mp4", buf, 2048, ini.c_str());
     container = LowerString(TrimString(buf));
 
-    delete_avi = GetPrivateProfileIntW(L"output", L"delete_avi", 1, ini.c_str()) != 0;
     merge_audio = GetPrivateProfileIntW(L"output", L"merge_audio", 1, ini.c_str()) != 0;
 
     GetPrivateProfileStringW(L"paths", L"ffmpeg", L"", buf, 2048, ini.c_str());
@@ -374,7 +373,6 @@ bool EncoderConfig::Save(const std::wstring& path) const {
     WriteInt(L"advanced", L"lookahead", lookahead);
 
     WriteStr(L"output", L"container", container);
-    WriteInt(L"output", L"delete_avi", delete_avi ? 1 : 0);
     WriteInt(L"output", L"merge_audio", merge_audio ? 1 : 0);
 
     WriteStr(L"paths", L"ffmpeg", ffmpeg_path);
