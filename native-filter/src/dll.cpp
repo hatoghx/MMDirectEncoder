@@ -1,0 +1,186 @@
+#include <windows.h>
+#include <streams.h>
+#include <stdio.h>
+#include <wchar.h>
+#include "ffmpeg_encoder.h"
+
+HINSTANCE g_hInst = NULL;
+static LONG g_serverLocks = 0;
+
+EXTERN_C const GUID CLSID_FFmpegEncoder = {
+    0xD79D43B2, 0xF005, 0x40A4,
+    { 0xBE, 0x18, 0xAF, 0xD1, 0x9C, 0x03, 0xE6, 0xE6 }
+};
+
+CFactoryTemplate g_Templates[] = {
+    { L"MMDirect Encoder",
+      &CLSID_FFmpegEncoder,
+      CFFmpegEncoder::CreateInstance,
+      NULL,
+      NULL }
+};
+int g_cTemplates = sizeof(g_Templates) / sizeof(g_Templates[0]);
+
+class CClassFactory : public IClassFactory
+{
+public:
+    CClassFactory(const CFactoryTemplate* pTemplate)
+        : m_cRef(1), m_pTemplate(pTemplate)
+    {
+    }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+    {
+        if (!ppv) return E_POINTER;
+        *ppv = NULL;
+        if (riid == IID_IUnknown || riid == IID_IClassFactory) {
+            *ppv = static_cast<IClassFactory*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    STDMETHODIMP_(ULONG) AddRef() override
+    {
+        return InterlockedIncrement(&m_cRef);
+    }
+
+    STDMETHODIMP_(ULONG) Release() override
+    {
+        LONG r = InterlockedDecrement(&m_cRef);
+        if (r == 0) {
+            delete this;
+        }
+        return r;
+    }
+
+    STDMETHODIMP CreateInstance(LPUNKNOWN pUnkOuter, REFIID riid, void** ppv) override
+    {
+        if (!ppv) return E_POINTER;
+        *ppv = NULL;
+        if (pUnkOuter) return CLASS_E_NOAGGREGATION;
+
+        HRESULT hr = S_OK;
+        CUnknown* pUnk = NULL;
+        try {
+            pUnk = m_pTemplate->CreateInstance(NULL, &hr);
+        } catch (...) {
+            return E_OUTOFMEMORY;
+        }
+        if (!pUnk) return hr;
+
+        pUnk->NonDelegatingAddRef();
+        hr = pUnk->NonDelegatingQueryInterface(riid, ppv);
+        pUnk->NonDelegatingRelease();
+        return hr;
+    }
+
+    STDMETHODIMP LockServer(BOOL fLock) override
+    {
+        if (fLock) {
+            InterlockedIncrement(&g_serverLocks);
+        } else {
+            InterlockedDecrement(&g_serverLocks);
+        }
+        return S_OK;
+    }
+
+private:
+    LONG m_cRef;
+    const CFactoryTemplate* m_pTemplate;
+};
+
+extern "C" BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID)
+{
+    if (dwReason == DLL_PROCESS_ATTACH) {
+        g_hInst = hInstance;
+        DisableThreadLibraryCalls(hInstance);
+        DbgInitialise(hInstance);
+    } else if (dwReason == DLL_PROCESS_DETACH) {
+        DbgTerminate();
+    }
+    return TRUE;
+}
+
+STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
+{
+    if (!ppv) return E_POINTER;
+    *ppv = NULL;
+    if (!g_cTemplates) return E_OUTOFMEMORY;
+
+    for (int i = 0; i < g_cTemplates; i++) {
+        if (g_Templates[i].IsClassID(rclsid)) {
+            CClassFactory* pCF = NULL;
+            try {
+                pCF = new CClassFactory(&g_Templates[i]);
+            } catch (...) {
+                return E_OUTOFMEMORY;
+            }
+            if (!pCF) return E_OUTOFMEMORY;
+
+            HRESULT hr = pCF->QueryInterface(riid, ppv);
+            pCF->Release();
+            return hr;
+        }
+    }
+    return CLASS_E_CLASSNOTAVAILABLE;
+}
+
+STDAPI DllCanUnloadNow(void)
+{
+    if (CBaseObject::ObjectsActive() ||
+        InterlockedCompareExchange(&g_serverLocks, 0, 0) != 0) {
+        return S_FALSE;
+    }
+    return S_OK;
+}
+
+namespace {
+    const WCHAR kClsid[] = L"{D79D43B2-F005-40A4-BE18-AFD19C03E6E6}";
+    const WCHAR kFriendlyName[] = L"MMDirect Encoder";
+    const WCHAR kCategories[][40] = {
+        L"{33d9a760-90c8-11d0-bd43-00a0c911ce86}",
+        L"{860bb310-5d01-11d0-bd3b-00a0c911ce86}",
+    };
+
+    HRESULT RegisterCategories(BOOL bRegister)
+    {
+        for (int i = 0; i < 2; i++) {
+            WCHAR sub[256];
+            swprintf_s(sub, L"CLSID\\%s\\Instance\\%s", kCategories[i], kClsid);
+            if (bRegister) {
+                HKEY hk = NULL;
+                LONG r = RegCreateKeyExW(HKEY_CLASSES_ROOT, sub, 0, NULL,
+                                         REG_OPTION_NON_VOLATILE, KEY_WRITE,
+                                         NULL, &hk, NULL);
+                if (r != ERROR_SUCCESS) {
+                    return E_FAIL;
+                }
+                RegSetValueExW(hk, L"CLSID", 0, REG_SZ,
+                               reinterpret_cast<const BYTE*>(kClsid),
+                               static_cast<DWORD>((wcslen(kClsid) + 1) * sizeof(WCHAR)));
+                RegSetValueExW(hk, L"FriendlyName", 0, REG_SZ,
+                               reinterpret_cast<const BYTE*>(kFriendlyName),
+                               static_cast<DWORD>((wcslen(kFriendlyName) + 1) * sizeof(WCHAR)));
+                RegCloseKey(hk);
+            } else {
+                RegDeleteTreeW(HKEY_CLASSES_ROOT, sub);
+            }
+        }
+        return S_OK;
+    }
+}
+
+STDAPI DllRegisterServer(void)
+{
+    HRESULT hr = AMovieDllRegisterServer2(TRUE);
+    if (FAILED(hr)) return hr;
+    return RegisterCategories(TRUE);
+}
+
+STDAPI DllUnregisterServer(void)
+{
+    RegisterCategories(FALSE);
+    return AMovieDllRegisterServer2(FALSE);
+}
