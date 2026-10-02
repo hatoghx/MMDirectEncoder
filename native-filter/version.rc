@@ -18,7 +18,7 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "MMDirectEncoder Project\0"
+            VALUE "CompanyName", "hato\0"
             VALUE "FileDescription", "MMDirectEncoder DirectShow Filter\0"
             VALUE "FileVersion", MMDIRECT_VERSION_STRING
             VALUE "InternalName", "MMDirectEncoder.dll\0"
