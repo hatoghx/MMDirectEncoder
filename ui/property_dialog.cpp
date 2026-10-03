@@ -38,6 +38,8 @@ private:
 };
 
 namespace {
+    const UINT kLanguageChangedMessage = WM_APP + 1;
+
     struct DialogState {
         EncoderConfig* config = nullptr;
         int activeTab = 0;
@@ -137,11 +139,9 @@ namespace {
     };
 
     UILanguage ResolveLanguage(int ui_language) {
-        if (ui_language == 1) return UILanguage::Japanese;
-        if (ui_language == 2) return UILanguage::English;
-        LANGID lang = PRIMARYLANGID(GetUserDefaultUILanguage());
-        if (lang == LANG_JAPANESE) return UILanguage::Japanese;
-        return UILanguage::English;
+        EncoderConfig probe;
+        probe.ui_language = ui_language;
+        return probe.ResolvedLanguage() == 2 ? UILanguage::English : UILanguage::Japanese;
     }
 
     void UpdateDialogLanguage(HWND hwnd, UILanguage lang, const EncoderCapabilities& caps) {
@@ -274,7 +274,14 @@ namespace {
         RepopulateCombo(hwnd, IDC_COMBO_COLOR_RANGE, (lang == UILanguage::English ? rangesEn : rangesJa), 2);
 
         const wchar_t* langs[] = { tr(L"自動 (System)", L"Auto (System)"), L"日本語", L"English" };
-        RepopulateCombo(hwnd, IDC_COMBO_LANGUAGE, langs, 3);
+        if (SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCOUNT, 0, 0) != 3) {
+            RepopulateCombo(hwnd, IDC_COMBO_LANGUAGE, langs, 3);
+        } else {
+            int langSel = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCURSEL, 0, 0));
+            SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_DELETESTRING, 0, 0);
+            SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_INSERTSTRING, 0, reinterpret_cast<LPARAM>(langs[0]));
+            SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_SETCURSEL, langSel, 0);
+        }
     }
 
     void ReadConfigFromUI(HWND hwnd, EncoderConfig& cfg);
@@ -432,6 +439,7 @@ namespace {
             }
 
             HWND hTab = GetDlgItem(hwnd, IDC_TAB_MAIN);
+            SetWindowPos(hTab, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             TCITEMW tie;
             ZeroMemory(&tie, sizeof(tie));
             tie.mask = TCIF_TEXT;
@@ -483,20 +491,7 @@ namespace {
                         id == IDC_COMBO_BACKEND || id == IDC_COMBO_COLORSPACE) {
                         UpdateControlsState(hwnd);
                     } else if (id == IDC_COMBO_LANGUAGE && code == CBN_SELCHANGE) {
-                        int selLang = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCURSEL, 0, 0));
-                        EncoderConfig curCfg;
-                        ReadConfigFromUI(hwnd, curCfg);
-                        curCfg.ui_language = selLang;
-                        state->config->ui_language = selLang;
-                        UILanguage newLang = ResolveLanguage(selLang);
-                        EncoderCapabilities caps = EncoderController::GetCachedCapabilities(curCfg.ffmpeg_path);
-                        state->initializing = true;
-                        UpdateDialogLanguage(hwnd, newLang, caps);
-                        PopulateUIFromConfig(hwnd, curCfg);
-                        HWND hTab = GetDlgItem(hwnd, IDC_TAB_MAIN);
-                        TabCtrl_SetCurSel(hTab, state->activeTab);
-                        UpdateTabVisibility(hwnd, state->activeTab);
-                        state->initializing = false;
+                        PostMessageW(hwnd, kLanguageChangedMessage, 0, 0);
                     }
 
                     if (id != IDC_COMBO_PRESET && id != IDC_COMBO_LANGUAGE && id != IDC_BUTTON_TEST && id != IDC_BUTTON_OPEN_LOG &&
@@ -542,6 +537,26 @@ namespace {
         case WM_CLOSE:
             EndDialog(hwnd, IDCANCEL);
             return TRUE;
+
+        case kLanguageChangedMessage: {
+            if (!state) break;
+            int selLang = static_cast<int>(SendDlgItemMessageW(hwnd, IDC_COMBO_LANGUAGE, CB_GETCURSEL, 0, 0));
+            if (selLang < 0) selLang = 0;
+            EncoderConfig curCfg = *(state->config);
+            ReadConfigFromUI(hwnd, curCfg);
+            curCfg.ui_language = selLang;
+            state->config->ui_language = selLang;
+            EncoderCapabilities caps = EncoderController::GetCachedCapabilities(curCfg.ffmpeg_path);
+            state->initializing = true;
+            UpdateDialogLanguage(hwnd, ResolveLanguage(selLang), caps);
+            PopulateUIFromConfig(hwnd, curCfg);
+            TabCtrl_SetCurSel(GetDlgItem(hwnd, IDC_TAB_MAIN), state->activeTab);
+            UpdateTabVisibility(hwnd, -1);
+            UpdateTabVisibility(hwnd, state->activeTab);
+            state->initializing = false;
+            RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            return TRUE;
+        }
         }
 
         return FALSE;

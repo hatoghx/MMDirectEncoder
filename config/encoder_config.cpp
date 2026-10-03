@@ -1,4 +1,5 @@
 #include "encoder_config.h"
+#include "win_util.h"
 
 #include <shlobj.h>
 #include <algorithm>
@@ -31,18 +32,13 @@ namespace {
         size_t pos = p.find_last_of(L"\\/");
         return pos == std::wstring::npos ? L"" : p.substr(0, pos);
     }
-
-    bool PathFileExistsDirect(const std::wstring& path) {
-        DWORD attr = GetFileAttributesW(path.c_str());
-        return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-    }
 }
 
 std::wstring EncoderConfig::GetDefaultIniPath() {
     std::wstring dllDir = GetModuleDir(g_hInst);
     if (!dllDir.empty()) {
         std::wstring localIni = dllDir + L"\\MMDirectEncoder.ini";
-        if (PathFileExistsDirect(localIni)) {
+        if (winutil::FileExists(localIni)) {
             return localIni;
         }
     }
@@ -62,7 +58,7 @@ std::wstring EncoderConfig::GetLogDirectoryPath() {
     std::wstring dllDir = GetModuleDir(g_hInst);
     if (!dllDir.empty()) {
         std::wstring localLogs = dllDir + L"\\logs";
-        if (PathFileExistsDirect(dllDir + L"\\MMDirectEncoder.ini") || PathFileExistsDirect(localLogs)) {
+        if (winutil::FileExists(dllDir + L"\\MMDirectEncoder.ini") || winutil::FileExists(localLogs)) {
             CreateDirectoryW(localLogs.c_str(), NULL);
             return localLogs;
         }
@@ -81,26 +77,32 @@ std::wstring EncoderConfig::GetLogDirectoryPath() {
 }
 
 std::wstring EncoderConfig::ResolveExecutable(const std::wstring& name, const std::wstring& customPath) {
-    if (!customPath.empty() && PathFileExistsDirect(customPath)) {
+    if (winutil::IsAbsolutePath(customPath) && winutil::FileExists(customPath)) {
         return customPath;
     }
 
     std::wstring dllDir = GetModuleDir(g_hInst);
-    if (!dllDir.empty()) {
-        std::wstring binCand = dllDir + L"\\bin\\" + name + L".exe";
-        if (PathFileExistsDirect(binCand)) return binCand;
-        std::wstring dirCand = dllDir + L"\\" + name + L".exe";
-        if (PathFileExistsDirect(dirCand)) return dirCand;
-    }
+    if (dllDir.empty()) return std::wstring();
+    std::wstring binCand = dllDir + L"\\bin\\" + name + L".exe";
+    if (winutil::FileExists(binCand)) return binCand;
+    std::wstring dirCand = dllDir + L"\\" + name + L".exe";
+    if (winutil::FileExists(dirCand)) return dirCand;
+    return binCand;
+}
 
-    wchar_t searchBuf[MAX_PATH] = {};
-    std::wstring exeName = name + L".exe";
-    DWORD found = SearchPathW(NULL, exeName.c_str(), NULL, MAX_PATH, searchBuf, NULL);
-    if (found > 0 && found < MAX_PATH) {
-        return std::wstring(searchBuf, found);
+std::wstring EncoderConfig::NormalizeChroma(std::wstring value) {
+    if (value.size() > 4 && value.compare(value.size() - 4, 4, L"10le") == 0) {
+        value.erase(value.size() - 4);
     }
+    if (value != L"yuv420p" && value != L"yuv422p" && value != L"yuv444p") {
+        value = L"yuv420p";
+    }
+    return value;
+}
 
-    return name;
+int EncoderConfig::ResolvedLanguage() const {
+    if (ui_language == 1 || ui_language == 2) return ui_language;
+    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_JAPANESE ? 1 : 2;
 }
 
 void EncoderConfig::ApplyPreset(PresetType type) {
@@ -180,16 +182,6 @@ void EncoderConfig::ApplyPreset(PresetType type) {
 }
 
 namespace {
-    std::wstring BaseChroma(std::wstring chroma) {
-        if (chroma.size() > 4 && chroma.compare(chroma.size() - 4, 4, L"10le") == 0) {
-            chroma.erase(chroma.size() - 4);
-        }
-        if (chroma != L"yuv420p" && chroma != L"yuv422p" && chroma != L"yuv444p") {
-            chroma = L"yuv420p";
-        }
-        return chroma;
-    }
-
     bool IsVideoFormat(const std::wstring& f) {
         return f == L"h264" || f == L"hevc" || f == L"av1" || f == L"prores422" || f == L"prores422hq" || f == L"vp9" || f == L"av1webm";
     }
@@ -244,7 +236,7 @@ void EncoderConfig::ValidateAndCorrect() {
     std::wstring f = EffectiveFormat();
     if (f == L"h264" || f == L"hevc" || f == L"av1" || f == L"av1webm") {
         container = (f == L"av1webm") ? L"webm" : L"mp4";
-        chroma = BaseChroma(chroma);
+        chroma = NormalizeChroma(chroma);
         if (f == L"av1" || f == L"av1webm") chroma = L"yuv420p";
     } else if (IsProRes()) {
         container = L"mov";
@@ -252,7 +244,7 @@ void EncoderConfig::ValidateAndCorrect() {
     } else if (f == L"vp9") {
         container = L"webm";
         backend = L"cpu";
-        if (!alpha_enabled) chroma = BaseChroma(chroma);
+        if (!alpha_enabled) chroma = NormalizeChroma(chroma);
     } else {
         container = f;
         backend = L"cpu";
@@ -288,7 +280,7 @@ static std::wstring ToFullPath(const std::wstring& path) {
 
 bool EncoderConfig::Load(const std::wstring& path) {
     std::wstring ini = ToFullPath(path.empty() ? GetDefaultIniPath() : path);
-    if (!PathFileExistsDirect(ini)) {
+    if (!winutil::FileExists(ini)) {
         ApplyPreset(PresetType::HighQualityH264);
         return false;
     }

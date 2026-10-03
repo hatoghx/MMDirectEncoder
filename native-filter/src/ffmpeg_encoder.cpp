@@ -1,5 +1,7 @@
 #include "ffmpeg_encoder.h"
 #include "mmd_host.h"
+#include "../../config/app_version.h"
+#include "../../config/win_util.h"
 #include "../../encoder/exr_writer.h"
 #include "../../ui/property_dialog.h"
 
@@ -14,42 +16,21 @@ extern HINSTANCE g_hInst;
 namespace {
     const DWORD kStopWaitMs = 60000;
     const ULONGLONG kFinishWaitMs = 1800000;
+    const DWORD kH264Fourcc = MAKEFOURCC('H', '2', '6', '4');
 
     const GUID kMmdRgb32 = {
         0x773C9AC0, 0x3274, 0x11D0,
         {0xB7, 0x24, 0x00, 0xAA, 0x00, 0x6C, 0x1A, 0x01}};
 
-    bool DirectFileExists(const std::wstring& path) {
-        DWORD attr = GetFileAttributesW(path.c_str());
-        return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-    }
-
-    bool CheckSequenceExists(const std::wstring& primaryPath) {
-        if (DirectFileExists(primaryPath)) return true;
-        size_t underscore = primaryPath.find_last_of(L'_');
-        size_t dot = primaryPath.find_last_of(L'.');
-        if (underscore != std::wstring::npos && dot != std::wstring::npos && underscore < dot) {
-            std::wstring pattern = primaryPath.substr(0, underscore + 1) + L"*" + primaryPath.substr(dot);
-            WIN32_FIND_DATAW wfd;
-            HANDLE hFind = FindFirstFileW(pattern.c_str(), &wfd);
-            if (hFind != INVALID_HANDLE_VALUE) {
-                FindClose(hFind);
-                return true;
-            }
-        }
-        return false;
-    }
-
     bool SafeDeleteFileWithRetry(const std::wstring& path, int maxRetries = 25, DWORD delayMs = 100) {
         if (path.empty()) return true;
         for (int i = 0; i < maxRetries; i++) {
-            if (!DirectFileExists(path)) return true;
+            if (!winutil::FileExists(path)) return true;
             if (DeleteFileW(path.c_str())) return true;
-            DWORD err = GetLastError();
-            if (err == ERROR_FILE_NOT_FOUND) return true;
+            if (GetLastError() == ERROR_FILE_NOT_FOUND) return true;
             Sleep(delayMs);
         }
-        return !DirectFileExists(path);
+        return !winutil::FileExists(path);
     }
 }
 
@@ -58,7 +39,12 @@ DWORD WINAPI CFFmpegEncoder::StderrThreadProc(LPVOID param) {
     char buf[4096];
     DWORD rd = 0;
     while (ReadFile(pThis->m_hChildStderrR, buf, sizeof(buf), &rd, NULL) && rd > 0) {
-        pThis->m_stderrBuffer.append(buf, rd);
+        CAutoLock lock(&pThis->m_stderrLock);
+        std::string& out = pThis->m_stderrBuffer;
+        if (out.size() + rd > EncoderController::kMaxCapturedOutput) {
+            out.erase(0, (std::min)(out.size(), out.size() + rd - EncoderController::kMaxCapturedOutput / 2));
+        }
+        out.append(buf, rd);
     }
     return 0;
 }
@@ -100,7 +86,7 @@ STDMETHODIMP CFFmpegEncoder::ShowDialog(int iDialog, HWND hwnd) {
     if (iDialog == VfwCompressDialog_QueryConfig) return S_OK;
     if (iDialog == VfwCompressDialog_QueryAbout) return S_OK;
     if (iDialog == VfwCompressDialog_About) {
-        MessageBoxW(hwnd, L"MMDirectEncoder\nUtVideo / FFV1 / ProRes / H.264 / HEVC / AV1 / VP9 / PNG / JPEG", L"MMDirectEncoder", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(hwnd, L"MMDirectEncoder " MMDIRECT_VERSION_WSTRING, L"MMDirectEncoder", MB_OK | MB_ICONINFORMATION);
         return S_OK;
     }
     if (iDialog != VfwCompressDialog_Config) return E_INVALIDARG;
@@ -173,9 +159,7 @@ HRESULT CFFmpegEncoder::CheckTransform(const CMediaType* mtIn, const CMediaType*
 
     if (mtOut->majortype != MEDIATYPE_Video) return VFW_E_TYPE_NOT_ACCEPTED;
 
-    DWORD expectedFourcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
-
-    GUID expected = FourccGuid(expectedFourcc);
+    GUID expected = FourccGuid(kH264Fourcc);
     if (!IsEqualGUID(*mtOut->Subtype(), expected)) {
         return VFW_E_TYPE_NOT_ACCEPTED;
     }
@@ -188,10 +172,6 @@ HRESULT CFFmpegEncoder::GetMediaType(int iPosition, CMediaType* pmt) {
     if (iPosition > 0) return VFW_S_NO_MORE_ITEMS;
     if (!m_pInput->IsConnected() || m_width <= 0 || m_height <= 0) return VFW_E_NOT_CONNECTED;
 
-    DWORD fcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
-
-    m_fourcc = fcc;
-
     VIDEOINFOHEADER vih;
     ZeroMemory(&vih, sizeof(vih));
     vih.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -199,13 +179,13 @@ HRESULT CFFmpegEncoder::GetMediaType(int iPosition, CMediaType* pmt) {
     vih.bmiHeader.biHeight = m_height;
     vih.bmiHeader.biPlanes = 1;
     vih.bmiHeader.biBitCount = 24;
-    vih.bmiHeader.biCompression = m_fourcc;
+    vih.bmiHeader.biCompression = kH264Fourcc;
     vih.bmiHeader.biSizeImage = 0;
     vih.AvgTimePerFrame = m_frameDur;
     SetRect(&vih.rcSource, 0, 0, m_width, m_height);
     vih.rcTarget = vih.rcSource;
 
-    GUID sub = FourccGuid(m_fourcc);
+    GUID sub = FourccGuid(kH264Fourcc);
     pmt->InitMediaType();
     pmt->SetType(&MEDIATYPE_Video);
     pmt->SetSubtype(&sub);
@@ -344,8 +324,6 @@ HRESULT CFFmpegEncoder::StartStreaming() {
     m_config.Load();
     ResolveOutputPaths();
     m_mmd = ReadMmdOutputInfo(m_frameDur);
-    m_outMux = L"h264";
-    m_fourcc = (static_cast<DWORD>('H')) | (static_cast<DWORD>('2') << 8) | (static_cast<DWORD>('6') << 16) | (static_cast<DWORD>('4') << 24);
     m_launchPending = true;
     m_started = true;
     return S_OK;
@@ -365,10 +343,7 @@ HRESULT CFFmpegEncoder::StopStreaming() {
 }
 
 HRESULT CFFmpegEncoder::StartFFmpeg() {
-    SECURITY_ATTRIBUTES sa;
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-    sa.lpSecurityDescriptor = NULL;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
 
     HANDLE hStdinRd = NULL, hStdinWr = NULL;
     HANDLE hStdoutRd = NULL, hStdoutWr = NULL;
@@ -391,20 +366,9 @@ HRESULT CFFmpegEncoder::StartFFmpeg() {
     SetHandleInformation(hStdoutRd, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(hStderrRd, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOW si;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = hStdinRd;
-    si.hStdOutput = hStdoutWr;
-    si.hStdError = hStderrWr;
-
     PROCESS_INFORMATION pi;
-    ZeroMemory(&pi, sizeof(pi));
-
-    std::wstring cmd = m_plan.main_command;
-    BOOL ok = CreateProcessW(NULL, cmd.data(), NULL, NULL, TRUE,
-                             CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    bool ok = EncoderController::StartProcess(m_plan.main_command, hStdinRd, hStdoutWr, hStderrWr, &pi);
+    DWORD startError = ok ? ERROR_SUCCESS : GetLastError();
 
     CloseHandle(hStdinRd);
     CloseHandle(hStdoutWr);
@@ -414,7 +378,7 @@ HRESULT CFFmpegEncoder::StartFFmpeg() {
         CloseHandle(hStdinWr);
         CloseHandle(hStdoutRd);
         CloseHandle(hStderrRd);
-        return HRESULT_FROM_WIN32(GetLastError());
+        return HRESULT_FROM_WIN32(startError);
     }
 
     m_hProc = pi.hProcess;
@@ -425,7 +389,12 @@ HRESULT CFFmpegEncoder::StartFFmpeg() {
 
     m_hThread = CreateThread(NULL, 0, ReaderThreadProc, this, 0, NULL);
     m_hStderrThread = CreateThread(NULL, 0, StderrThreadProc, this, 0, NULL);
-
+    if (!m_hThread || !m_hStderrThread) {
+        DWORD threadError = GetLastError();
+        TerminateProcess(m_hProc, 1);
+        StopFFmpeg();
+        return HRESULT_FROM_WIN32(threadError);
+    }
     return S_OK;
 }
 
@@ -440,16 +409,10 @@ void CFFmpegEncoder::StopFFmpeg() {
             WaitForSingleObject(m_hProc, 2000);
         }
     }
-    if (m_hThread) {
-        WaitForSingleObject(m_hThread, 5000);
-        CloseHandle(m_hThread);
-        m_hThread = NULL;
-    }
-    if (m_hStderrThread) {
-        WaitForSingleObject(m_hStderrThread, 2000);
-        CloseHandle(m_hStderrThread);
-        m_hStderrThread = NULL;
-    }
+    EncoderController::JoinReaderThread(m_hThread, 5000);
+    m_hThread = NULL;
+    EncoderController::JoinReaderThread(m_hStderrThread, 5000);
+    m_hStderrThread = NULL;
     if (m_hChildStdoutR) {
         CloseHandle(m_hChildStdoutR);
         m_hChildStdoutR = NULL;
@@ -487,8 +450,7 @@ HRESULT CFFmpegEncoder::LaunchForFirstFrame(const BYTE* data, long cb) {
     m_plan = EncoderController::PrepareExecutionPlan(m_config, m_width, m_height, m_frameDur,
                                                      inputPixFmt, m_bottomUp, m_aviPath, m_mmd);
     std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", m_config.ffmpeg_path);
-    DWORD attr = GetFileAttributesW(ffmpeg.c_str());
-    m_ffmpegMissing = attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY);
+    m_ffmpegMissing = !winutil::FileExists(ffmpeg);
     if (m_ffmpegMissing) {
         return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
     }
@@ -506,11 +468,7 @@ std::wstring CFFmpegEncoder::LastErrorLine() const {
 }
 
 void CFFmpegEncoder::NotifyProblem(const std::wstring& detail) const {
-    int lang = m_config.ui_language;
-    if (lang == 0) {
-        LANGID sysLang = PRIMARYLANGID(GetUserDefaultUILanguage());
-        lang = (sysLang == LANG_JAPANESE) ? 1 : 2;
-    }
+    int lang = m_config.ResolvedLanguage();
     std::wstring logDir = EncoderConfig::GetLogDirectoryPath();
     std::wstring text;
     if (lang == 2) {
@@ -527,12 +485,8 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
     DWORD exitCode = m_completed ? 0 : 1;
     std::wstring logDir = EncoderConfig::GetLogDirectoryPath();
 
-    int lang = m_config.ui_language;
-    if (lang == 0) {
-        LANGID sysLang = PRIMARYLANGID(GetUserDefaultUILanguage());
-        lang = (sysLang == LANG_JAPANESE) ? 1 : 2;
-    }
-    auto tr = [lang](const std::wstring& ja, const std::wstring& en) -> std::wstring {
+    int lang = m_config.ResolvedLanguage();
+    auto tr =[lang](const std::wstring& ja, const std::wstring& en) -> std::wstring {
         if (lang == 2) return en;
         return ja;
     };
@@ -563,12 +517,7 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
         return;
     }
 
-    bool outputExists = false;
-    if (!m_plan.primary_output_path.empty()) {
-        DWORD attr = GetFileAttributesW(m_plan.primary_output_path.c_str());
-        outputExists = attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-    }
-    if (!outputExists) {
+    if (!winutil::FileExists(m_plan.primary_output_path)) {
         EncoderController::WriteExportLog(logDir, m_plan, m_mmd, m_width, m_height, m_framesReceived, exitCode, elapsed,
                                           L"Failed: output file not found", m_stderrBuffer);
         if (m_aviPath.empty()) {
@@ -592,11 +541,7 @@ void CFFmpegEncoder::PostProcessOutputs(bool aborted) {
         }
     }
 
-    bool aviExists = false;
-    if (!m_aviPath.empty()) {
-        DWORD attr = GetFileAttributesW(m_aviPath.c_str());
-        aviExists = attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-    }
+    bool aviExists = winutil::FileExists(m_aviPath);
     bool wantAudio = m_config.audio_enabled && m_config.merge_audio && !m_plan.audio_codec.empty() &&
                      !(m_mmd.valid && !m_mmd.wave_enabled);
     bool audioOk = true;
@@ -674,6 +619,15 @@ HRESULT CFFmpegEncoder::WriteFrame(const BYTE* data, long cb) {
 }
 
 HRESULT CFFmpegEncoder::Receive(IMediaSample* pSample) {
+    try {
+        return ReceiveFrame(pSample);
+    } catch (...) {
+        m_pipeFailed = true;
+        return S_OK;
+    }
+}
+
+HRESULT CFFmpegEncoder::ReceiveFrame(IMediaSample* pSample) {
     if (!pSample) return E_POINTER;
     if (m_pInput) {
         AM_SAMPLE2_PROPERTIES* pProps = m_pInput->SampleProps();
@@ -763,7 +717,10 @@ HRESULT CFFmpegEncoder::DeliverPacket(Packet& pkt) {
     }
 
     BYTE* dst = NULL;
-    pOut->GetPointer(&dst);
+    if (FAILED(pOut->GetPointer(&dst)) || !dst) {
+        pOut->Release();
+        return E_UNEXPECTED;
+    }
     memcpy(dst, pkt.data.data(), pkt.data.size());
     pOut->SetActualDataLength(static_cast<long>(pkt.data.size()));
 
@@ -822,17 +779,19 @@ DWORD WINAPI CFFmpegEncoder::ReaderThreadProc(LPVOID param) {
 }
 
 void CFFmpegEncoder::ReaderLoop() {
-    BYTE buf[65536];
-    for (;;) {
-        DWORD rd = 0;
-        if (!ReadFile(m_hChildStdoutR, buf, sizeof(buf), &rd, NULL) || rd == 0) {
-            break;
+    try {
+        std::vector<BYTE> buf(65536);
+        for (;;) {
+            DWORD rd = 0;
+            if (!ReadFile(m_hChildStdoutR, buf.data(), static_cast<DWORD>(buf.size()), &rd, NULL) || rd == 0) {
+                break;
+            }
+            OnRead(buf.data(), rd);
         }
-        OnRead(buf, rd);
-    }
-    {
         CAutoLock lock(&m_lock);
         FlushGroup(true);
+    } catch (...) {
+        m_pipeFailed = true;
     }
     m_readerDone.store(true);
 }
@@ -847,14 +806,8 @@ bool CFFmpegEncoder::NalIsVcl(const BYTE* nal, size_t len) const {
     if (len == 0) return false;
     BYTE h = nal[0];
     if ((h & 0x80) != 0) return false;
-    if (m_outMux == L"h264") {
-        BYTE type = h & 0x1F;
-        return type >= 1 && type <= 5;
-    }
-    if (m_outMux == L"hevc") {
-        return ((h >> 1) & 0x3F) <= 31;
-    }
-    return true;
+    BYTE type = h & 0x1F;
+    return type >= 1 && type <= 5;
 }
 
 void CFFmpegEncoder::ParseAnnexB() {

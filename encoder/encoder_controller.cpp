@@ -1,5 +1,6 @@
 #include "encoder_controller.h"
 #include "exr_writer.h"
+#include "win_util.h"
 
 #include <chrono>
 #include <ctime>
@@ -36,16 +37,31 @@ namespace {
         return out;
     }
 
-    DWORD GetFourcc(char a, char b, char c, char d) {
-        return (static_cast<DWORD>(static_cast<BYTE>(a))) |
-               (static_cast<DWORD>(static_cast<BYTE>(b)) << 8) |
-               (static_cast<DWORD>(static_cast<BYTE>(c)) << 16) |
-               (static_cast<DWORD>(static_cast<BYTE>(d)) << 24);
+    std::wstring EscapePercent(const std::wstring& s) {
+        std::wstring out;
+        out.reserve(s.size());
+        for (wchar_t ch : s) {
+            if (ch == L'%') out += L'%';
+            out += ch;
+        }
+        return out;
     }
 
-    bool PathFileExistsDirect(const std::wstring& path) {
-        DWORD attr = GetFileAttributesW(path.c_str());
-        return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    struct PipeReader {
+        HANDLE pipe = NULL;
+        std::string* out = nullptr;
+    };
+
+    DWORD WINAPI PipeReaderProc(LPVOID param) {
+        PipeReader* reader = static_cast<PipeReader*>(param);
+        char buffer[4096];
+        DWORD readBytes = 0;
+        while (ReadFile(reader->pipe, buffer, sizeof(buffer), &readBytes, NULL) && readBytes > 0) {
+            if (reader->out && reader->out->size() < EncoderController::kMaxCapturedOutput) {
+                reader->out->append(buffer, readBytes);
+            }
+        }
+        return 0;
     }
 
     struct DxgiGpuVendors {
@@ -88,14 +104,63 @@ namespace {
     }
 }
 
+bool EncoderController::StartProcess(const std::wstring& command, HANDLE hIn, HANDLE hOut, HANDLE hErr,
+                                     PROCESS_INFORMATION* pi) {
+    if (command.empty() || !pi) return false;
+    ZeroMemory(pi, sizeof(*pi));
+
+    HANDLE inherit[3];
+    DWORD count = 0;
+    for (HANDLE h : { hIn, hOut, hErr }) {
+        if (!h) continue;
+        bool seen = false;
+        for (DWORD i = 0; i < count; ++i) seen = seen || inherit[i] == h;
+        if (!seen) inherit[count++] = h;
+    }
+
+    std::wstring cmd = command;
+    if (count == 0) {
+        STARTUPINFOW si;
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
+        return CreateProcessW(NULL, cmd.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, pi) != FALSE;
+    }
+
+    SIZE_T attrSize = 0;
+    InitializeProcThreadAttributeList(NULL, 1, 0, &attrSize);
+    std::vector<BYTE> attrBuffer(attrSize);
+    LPPROC_THREAD_ATTRIBUTE_LIST attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrBuffer.data());
+    if (!InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize)) return false;
+    bool ok = false;
+    if (UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit, count * sizeof(HANDLE), NULL, NULL)) {
+        STARTUPINFOEXW si;
+        ZeroMemory(&si, sizeof(si));
+        si.StartupInfo.cb = sizeof(si);
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = hIn;
+        si.StartupInfo.hStdOutput = hOut;
+        si.StartupInfo.hStdError = hErr;
+        si.lpAttributeList = attrs;
+        ok = CreateProcessW(NULL, cmd.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+                            NULL, NULL, &si.StartupInfo, pi) != FALSE;
+    }
+    DeleteProcThreadAttributeList(attrs);
+    return ok;
+}
+
+void EncoderController::JoinReaderThread(HANDLE thread, DWORD timeoutMs) {
+    if (!thread) return;
+    if (WaitForSingleObject(thread, timeoutMs) != WAIT_OBJECT_0) {
+        CancelSynchronousIo(thread);
+        WaitForSingleObject(thread, INFINITE);
+    }
+    CloseHandle(thread);
+}
+
 bool EncoderController::ExecuteCommand(const std::wstring& command, DWORD timeoutMs, std::string* outStderr) {
     if (command.empty()) return false;
 
-    SECURITY_ATTRIBUTES sa;
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-    sa.lpSecurityDescriptor = NULL;
-
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
     HANDLE hStdErrRd = NULL, hStdErrWr = NULL;
     if (outStderr) {
         if (!CreatePipe(&hStdErrRd, &hStdErrWr, &sa, 0)) {
@@ -104,53 +169,36 @@ bool EncoderController::ExecuteCommand(const std::wstring& command, DWORD timeou
         SetHandleInformation(hStdErrRd, HANDLE_FLAG_INHERIT, 0);
     }
 
-    STARTUPINFOW si;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    if (outStderr) {
-        si.dwFlags |= STARTF_USESTDHANDLES;
-        si.hStdError = hStdErrWr;
-    }
-
     PROCESS_INFORMATION pi;
-    ZeroMemory(&pi, sizeof(pi));
-
-    std::wstring cmd = command;
-    BOOL ok = CreateProcessW(NULL, cmd.data(), NULL, NULL, outStderr ? TRUE : FALSE,
-                             CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-
-    if (hStdErrWr) {
-        CloseHandle(hStdErrWr);
-    }
-
-    if (!ok) {
+    bool started = StartProcess(command, NULL, NULL, hStdErrWr, &pi);
+    if (hStdErrWr) CloseHandle(hStdErrWr);
+    if (!started) {
         if (hStdErrRd) CloseHandle(hStdErrRd);
         return false;
     }
-
     CloseHandle(pi.hThread);
 
-    if (outStderr && hStdErrRd) {
-        char buffer[4096];
-        DWORD readBytes = 0;
-        while (ReadFile(hStdErrRd, buffer, sizeof(buffer), &readBytes, NULL) && readBytes > 0) {
-            outStderr->append(buffer, readBytes);
-        }
-        CloseHandle(hStdErrRd);
-    }
+    PipeReader reader;
+    reader.pipe = hStdErrRd;
+    reader.out = outStderr;
+    HANDLE readerThread = hStdErrRd ? CreateThread(NULL, 0, PipeReaderProc, &reader, 0, NULL) : NULL;
 
-    DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
-    if (wait != WAIT_OBJECT_0) {
+    bool finished = WaitForSingleObject(pi.hProcess, timeoutMs) == WAIT_OBJECT_0;
+    if (!finished) {
         TerminateProcess(pi.hProcess, 1);
-        WaitForSingleObject(pi.hProcess, 1000);
-        CloseHandle(pi.hProcess);
-        return false;
+        WaitForSingleObject(pi.hProcess, 5000);
     }
+    if (readerThread) {
+        JoinReaderThread(readerThread, 5000);
+    } else if (hStdErrRd) {
+        PipeReaderProc(&reader);
+    }
+    if (hStdErrRd) CloseHandle(hStdErrRd);
 
     DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
+    if (finished) GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
-    return code == 0;
+    return finished && code == 0;
 }
 
 bool EncoderController::ProbeCodec(const std::wstring& ffmpegPath,
@@ -158,13 +206,6 @@ bool EncoderController::ProbeCodec(const std::wstring& ffmpegPath,
                                    const std::wstring& preset,
                                    const std::wstring& pixfmt,
                                    std::string* outError) {
-    if (codec == L"png") {
-        std::wstring cmd;
-        AppendQuoted(cmd, ffmpegPath);
-        cmd += L" -hide_banner -loglevel error -nostdin -f lavfi -i color=c=black:s=64x64:d=0.1 -frames:v 1 -c:v png -f null -";
-        return ExecuteCommand(cmd, 15000, outError);
-    }
-
     std::wstring cmd;
     AppendQuoted(cmd, ffmpegPath);
     cmd += L" -hide_banner -loglevel error -nostdin";
@@ -241,16 +282,6 @@ namespace {
         return oss.str();
     }
 
-    std::wstring BaseChroma(std::wstring chroma) {
-        if (chroma.size() > 4 && chroma.compare(chroma.size() - 4, 4, L"10le") == 0) {
-            chroma.erase(chroma.size() - 4);
-        }
-        if (chroma != L"yuv420p" && chroma != L"yuv422p" && chroma != L"yuv444p") {
-            chroma = L"yuv420p";
-        }
-        return chroma;
-    }
-
     bool Contains(const std::wstring& s, const wchar_t* part) {
         return s.find(part) != std::wstring::npos;
     }
@@ -305,14 +336,6 @@ namespace {
         wchar_t num[64];
         swprintf_s(num, fmt, number);
         return base + num + ext;
-    }
-
-    std::string WideToUtf8(const std::wstring& w) {
-        if (w.empty()) return std::string();
-        int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), NULL, 0, NULL, NULL);
-        std::string s(static_cast<size_t>(n), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, NULL, NULL);
-        return s;
     }
 }
 
@@ -409,7 +432,7 @@ std::wstring EncoderController::BuildVideoArgs(const EncoderConfig& config,
         pix = L"yuvj420p";
         params = L" -c:v mjpeg -q:v 2";
     } else {
-        std::wstring chroma = BaseChroma(config.chroma);
+        std::wstring chroma = EncoderConfig::NormalizeChroma(config.chroma);
         bool ten = config.bit_depth == 10;
         int quality = config.crf;
 
@@ -494,7 +517,7 @@ ExecutionPlan EncoderController::PrepareExecutionPlan(const EncoderConfig& confi
     ExecutionPlan plan;
     std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", config.ffmpeg_path);
     std::wstring effective = config.EffectiveFormat();
-    std::wstring chroma = BaseChroma(config.chroma);
+    std::wstring chroma = EncoderConfig::NormalizeChroma(config.chroma);
 
     std::wstring targetCodec;
     std::wstring targetBackend = L"cpu";
@@ -553,8 +576,6 @@ ExecutionPlan EncoderController::PrepareExecutionPlan(const EncoderConfig& confi
 
     plan.chosen_codec = targetCodec;
     plan.chosen_backend = targetBackend;
-    plan.elementary_muxer = L"h264";
-    plan.elementary_fourcc = GetFourcc('H', '2', '6', '4');
     plan.input_rate = RateString(frameDuration, mmd);
 
     plan.is_image_sequence = (effective == L"png" || effective == L"jpg" || effective == L"exr");
@@ -585,7 +606,7 @@ ExecutionPlan EncoderController::PrepareExecutionPlan(const EncoderConfig& confi
                 plan.sequence_digits = kTempSequenceDigits;
                 plan.sequence_renumber = true;
             }
-            mainOutPath = base + L"_%0" + std::to_wstring(plan.sequence_digits) + L"d." + plan.output_ext;
+            mainOutPath = EscapePercent(base) + L"_%0" + std::to_wstring(plan.sequence_digits) + L"d." + plan.output_ext;
             plan.primary_output_path = SequenceFramePath(plan, plan.sequence_start);
         } else {
             mainOutPath = base + L"." + plan.output_ext;
@@ -629,7 +650,7 @@ ExecutionPlan EncoderController::PrepareExecutionPlan(const EncoderConfig& confi
 }
 
 bool EncoderController::HasAudioStream(const std::wstring& ffmpegPath, const std::wstring& mediaPath) {
-    if (mediaPath.empty() || !PathFileExistsDirect(mediaPath)) return false;
+    if (mediaPath.empty() || !winutil::FileExists(mediaPath)) return false;
     std::wstring cmd;
     AppendQuoted(cmd, ffmpegPath);
     cmd += L" -hide_banner -nostdin -i";
@@ -647,7 +668,7 @@ bool EncoderController::MergeAudio(const std::wstring& ffmpegPath,
                                    const std::wstring& audioCodec,
                                    std::string* outLog) {
     if (audioCodec.empty() || targetVideoPath.empty() || audioSourcePath.empty() ||
-        !PathFileExistsDirect(targetVideoPath) || !PathFileExistsDirect(audioSourcePath)) {
+        !winutil::FileExists(targetVideoPath) || !winutil::FileExists(audioSourcePath)) {
         return false;
     }
 
@@ -695,7 +716,7 @@ bool EncoderController::MergeAudio(const std::wstring& ffmpegPath,
     AppendQuoted(cmd, tempMerged);
 
     bool ok = ExecuteCommand(cmd, 3600000, outLog);
-    if (!ok || !PathFileExistsDirect(tempMerged)) {
+    if (!ok || !winutil::FileExists(tempMerged)) {
         DeleteFileW(tempMerged.c_str());
         return false;
     }
@@ -717,7 +738,7 @@ bool EncoderController::RenumberSequence(ExecutionPlan& plan, long long frameCou
         long long number = plan.sequence_start + i;
         std::wstring from = FormatSequencePath(plan.sequence_base, plan.sequence_digits, number, plan.output_ext);
         std::wstring to = FormatSequencePath(plan.sequence_base, digits, number, plan.output_ext);
-        if (from == to || !PathFileExistsDirect(from)) continue;
+        if (from == to || !winutil::FileExists(from)) continue;
         if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING)) ok = false;
     }
     if (ok) {
@@ -729,15 +750,10 @@ bool EncoderController::RenumberSequence(ExecutionPlan& plan, long long frameCou
 }
 
 bool EncoderController::RunEncoderTest(const EncoderConfig& config, std::wstring& outMessage) {
-    int lang = config.ui_language;
-    if (lang == 0) {
-        LANGID sysLang = PRIMARYLANGID(GetUserDefaultUILanguage());
-        if (sysLang == LANG_JAPANESE) lang = 1;
-        else lang = 2;
-    }
+    int lang = config.ResolvedLanguage();
 
     std::wstring ffmpeg = EncoderConfig::ResolveExecutable(L"ffmpeg", config.ffmpeg_path);
-    if (!PathFileExistsDirect(ffmpeg) && ffmpeg != L"ffmpeg") {
+    if (!winutil::FileExists(ffmpeg)) {
         if (lang == 2) outMessage = L"ffmpeg.exe was not found.";
         else outMessage = L"ffmpeg.exe が見つかりません。";
         return false;
@@ -848,7 +864,7 @@ void EncoderController::WriteExportLog(const std::wstring& logDir,
     }
     ofs << L"Full Command: " << plan.main_command << L"\r\n";
 
-    std::string content = "\xEF\xBB\xBF" + WideToUtf8(ofs.str());
+    std::string content = "\xEF\xBB\xBF" + winutil::WideToUtf8(ofs.str());
     if (!processStderr.empty()) {
         content += "Stderr Output:\r\n";
         content += processStderr;

@@ -71,7 +71,7 @@ if errorlevel 1 exit /b 1
 
 echo Building standalone config executable...
 cl %COMMON% /W4 /Fo"%OBJ%\core\standalone.obj" "%SRC_UI%\standalone_config.cpp" || exit /b 1
-link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
+link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /GUARD:CF ^
   /OUT:"%DIST%\MMDirectEncoderConfig.exe" /PDB:"%OBJ%\MMDirectEncoderConfig.pdb" ^
   "%OBJ%\core\config.obj" "%OBJ%\core\encoder.obj" "%OBJ%\core\exr.obj" "%OBJ%\core\ui.obj" ^
   "%OBJ%\core\standalone.obj" "%OBJ%\core\encoder_ui.res" ^

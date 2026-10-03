@@ -1,4 +1,5 @@
 #include "exr_writer.h"
+#include "win_util.h"
 
 #include <ImfChannelList.h>
 #include <ImfCompression.h>
@@ -65,14 +66,6 @@ namespace {
             b = p[0]; g = p[1]; r = p[2]; a = p[3];
         }
     }
-
-    std::string WideToUtf8(const std::wstring& w) {
-        if (w.empty()) return std::string();
-        int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), NULL, 0, NULL, NULL);
-        std::string s(static_cast<size_t>(n), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, NULL, NULL);
-        return s;
-    }
 }
 
 bool WriteExrFrame(const std::wstring& path,
@@ -88,7 +81,12 @@ bool WriteExrFrame(const std::wstring& path,
     const Tables& tables = GetTables();
     const int channels = withAlpha ? 4 : 3;
 
-    std::vector<half> pixels(static_cast<size_t>(width) * height * channels);
+    std::vector<half> pixels;
+    try {
+        pixels.resize(static_cast<size_t>(width) * height * channels);
+    } catch (const std::exception&) {
+        return false;
+    }
     for (int y = 0; y < height; ++y) {
         int srcY = bottomUp ? (height - 1 - y) : y;
         const BYTE* row = data + static_cast<size_t>(srcY) * stride;
@@ -123,7 +121,7 @@ bool WriteExrFrame(const std::wstring& path,
         frameBuffer.insert("B", Imf::Slice(Imf::HALF, base + sizeof(half) * 2, xStride, yStride));
         if (withAlpha) frameBuffer.insert("A", Imf::Slice(Imf::HALF, base + sizeof(half) * 3, xStride, yStride));
 
-        Imf::OutputFile file(WideToUtf8(temp).c_str(), header, Imf::globalThreadCount());
+        Imf::OutputFile file(winutil::WideToUtf8(temp).c_str(), header, Imf::globalThreadCount());
         file.setFrameBuffer(frameBuffer);
         file.writePixels(height);
     } catch (const std::exception&) {

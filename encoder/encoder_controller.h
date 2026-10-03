@@ -36,8 +36,6 @@ struct ExecutionPlan {
     std::wstring main_command;
     std::wstring primary_output_path;
     std::wstring output_ext;
-    std::wstring elementary_muxer = L"h264";
-    DWORD elementary_fourcc = 0;
     bool is_image_sequence = false;
     std::wstring sequence_base;
     int sequence_start = 0;
@@ -51,6 +49,11 @@ struct ExecutionPlan {
 class EncoderController {
 public:
     static const int kTempSequenceDigits = 9;
+    static const size_t kMaxCapturedOutput = 1024 * 1024;
+
+    static bool StartProcess(const std::wstring& command, HANDLE hIn, HANDLE hOut, HANDLE hErr,
+                             PROCESS_INFORMATION* pi);
+    static void JoinReaderThread(HANDLE thread, DWORD timeoutMs);
 
     static EncoderCapabilities ProbeCapabilities(const std::wstring& ffmpegPath);
     static EncoderCapabilities GetCachedCapabilities(const std::wstring& ffmpegPath = L"", bool forceRefresh = false);

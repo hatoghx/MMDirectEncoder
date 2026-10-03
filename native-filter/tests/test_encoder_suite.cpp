@@ -129,6 +129,14 @@ int main() {
         std::wcout << L"-> cpu " << cpuKeys[i] << L": " << msg << std::endl;
         assert(ok);
     }
+    {
+        EncoderConfig e;
+        e.format = L"png";
+        e.ValidateAndCorrect();
+        ExecutionPlan plan = EncoderController::PrepareExecutionPlan(e, 64, 64, 333333, L"bgr24", true, L"C:\\temp\\100%_take.avi", mmd);
+        assert(Has(plan.main_command, L"100%%_take_%03d.png"));
+        assert(plan.primary_output_path == L"C:\\temp\\100%_take_120.png");
+    }
     std::cout << "-> passed." << std::endl;
 
     std::cout << "[Test 3] EXR writer..." << std::endl;

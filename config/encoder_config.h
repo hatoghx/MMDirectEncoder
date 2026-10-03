@@ -45,6 +45,8 @@ struct EncoderConfig {
     static std::wstring GetLogDirectoryPath();
     static std::wstring ResolveExecutable(const std::wstring& name, const std::wstring& customPath);
     static int MaxQuality(const std::wstring& format);
+    static std::wstring NormalizeChroma(std::wstring value);
+    int ResolvedLanguage() const;
     void ApplyPreset(PresetType type);
     void ValidateAndCorrect();
     std::wstring EffectiveFormat() const;

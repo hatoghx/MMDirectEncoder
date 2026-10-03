@@ -1,6 +1,8 @@
 ﻿#define AppName "MMDirectEncoder"
 #define BuildDir "..\..\build"
-#define AppVersion GetStringFileInfo(BuildDir + "\MMDirectEncoder.dll", "ProductVersion")
+#ifndef AppVersion
+  #define AppVersion GetStringFileInfo(BuildDir + "\MMDirectEncoder.dll", "ProductVersion")
+#endif
 #define FilterClsid "{{D79D43B2-F005-40A4-BE18-AFD19C03E6E6}"
 #define VideoCompressorCategory "{{33d9a760-90c8-11d0-bd43-00a0c911ce86}"
 #define LegacyFilterCategory "{{083863F1-70DE-11d0-BD40-00A0C911CE86}"
@@ -31,7 +33,6 @@ CloseApplications=no
 SetupLogging=yes
 WizardStyle=classic
 DisableReadyMemo=yes
-DisableFinishedPage=yes
 DisableWelcomePage=no
 LicenseFile={#BuildDir}\LICENSE
 
@@ -40,7 +41,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
 SettingsShortcut=MMDirectEncoder Settings
-MmdRunning=Close MikuMikuDance, then click Retry.
+MmdRunning=Close MikuMikuDance and MMDirectEncoder Settings, then click Retry.
 NewerInstalled=Version %1 is installed. Replace it with %2?
 AlreadyInstalled=MMDirectEncoder %1 is already installed.%n%nYes: Open settings%nNo: Reinstall%nCancel: Exit
 KeepSettingsQuestion=Also delete settings and logs?
@@ -52,6 +53,7 @@ TestVideoFailed=Test encode failed. Update the GPU driver or set Encoder to CPU.
 TestExrFailed=Test EXR write failed. Check free disk space.
 TestUnknown=Self test failed (code %1).
 TestLogHint=Log: %1
+FinishedWithProblem=MMDirectEncoder was installed, but the self test failed.%n%n%1
 
 [Files]
 Source: "{#BuildDir}\MMDirectEncoder.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -102,9 +104,14 @@ Type: dirifempty; Name: "{app}\LICENSES"
 Type: dirifempty; Name: "{group}"
 
 [Code]
+var
+  SelfTestMessage: String;
+
 function IsMmdRunning(): Boolean;
 begin
-  Result := FindWindowByClassName('Polygon Movie Maker') <> 0;
+  Result := (FindWindowByClassName('Polygon Movie Maker') <> 0) or
+    (FindWindowByWindowName('MMDirectEncoder Settings') <> 0) or
+    (FindWindowByWindowName('MMDirectEncoder 設定') <> 0);
 end;
 
 function WaitForMmdToClose(): Boolean;
@@ -232,16 +239,14 @@ end;
 procedure RunSelfTest();
 var
   Code: Integer;
-  Message: String;
 begin
   WizardForm.StatusLabel.Caption := SetupMessage(msgStatusRunProgram);
   if not Exec(ExpandConstant('{app}\MMDirectEncoderConfig.exe'), '--selftest', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) then
     Code := 11;
   Log('Self test result: ' + IntToStr(Code));
-  Message := DescribeSelfTest(Code);
-  if (Message <> '') and not WizardSilent() then
-    MsgBox(Message, mbError, MB_OK);
+  SelfTestMessage := DescribeSelfTest(Code);
 end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
@@ -253,6 +258,15 @@ begin
   begin
     MigrateLegacySettings();
     RunSelfTest();
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (SelfTestMessage <> '') then
+  begin
+    WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('FinishedWithProblem'), [SelfTestMessage]);
+    WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
   end;
 end;
 
